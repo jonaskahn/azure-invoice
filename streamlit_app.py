@@ -19,8 +19,8 @@ class Config:
     # Chart Dimensions
     CHART_WIDTH = 800
     CHART_HEIGHT = 500
-    LARGE_CHART_WIDTH = 1200
-    SMALL_CHART_HEIGHT = 600
+    LARGE_CHART_WIDTH = 1000
+    SMALL_CHART_HEIGHT = 400
 
     # Text and Rotation
     LABEL_FONT_SIZE = 12
@@ -238,7 +238,7 @@ class StreamlitChartCreator:
             },
             xaxis_title='Machine (ResourceName)',
             yaxis_title='Cost (USD)',
-            height=int(Config.SMALL_CHART_HEIGHT * 1.5),
+            height=int(Config.SMALL_CHART_HEIGHT * 1.1),
             showlegend=False,
             xaxis={'tickangle': Config.ROTATION_ANGLE},
             plot_bgcolor='white',
@@ -320,7 +320,7 @@ class StreamlitChartCreator:
                 'xanchor': 'center',
                 'font': {'size': 18}
             },
-            height=int(Config.CHART_HEIGHT * 1.5),
+            height=int(Config.CHART_HEIGHT * 1.1),
             showlegend=True,
             legend=dict(
                 yanchor="top",
@@ -350,6 +350,138 @@ class StreamlitDashboard:
             layout="wide",
             initial_sidebar_state="expanded"
         )
+
+        # Add CSS for print/PDF export optimization
+        st.markdown("""
+        <style>
+        /* Print styles for PDF export */
+        @media print {
+            /* Show main content */
+            body, html, .stApp {
+                visibility: visible !important;
+                background-color: white !important;
+                color: black !important;
+                font-size: 12px !important;
+            }
+
+            /* Hide Streamlit UI elements */
+            header[data-testid="stHeader"] {
+                display: none !important;
+            }
+
+            div[data-testid="stSidebar"] {
+                display: none !important;
+            }
+
+            div[data-testid="stToolbar"] {
+                display: none !important;
+            }
+
+            footer {
+                display: none !important;
+            }
+
+            /* Show main content area */
+            .main, .block-container {
+                display: block !important;
+                visibility: visible !important;
+                max-width: 100% !important;
+                padding: 1rem !important;
+                margin: 0 !important;
+            }
+
+            /* Ensure charts are visible */
+            .js-plotly-plot, .plotly {
+                display: block !important;
+                visibility: visible !important;
+                page-break-inside: avoid !important;
+                margin-bottom: 1rem !important;
+                background-color: white !important;
+            }
+
+            /* Style headers */
+            h1, h2, h3 {
+                color: black !important;
+                page-break-after: avoid !important;
+                margin-top: 1rem !important;
+                margin-bottom: 0.5rem !important;
+            }
+
+            /* Style metrics */
+            div[data-testid="metric-container"] {
+                display: inline-block !important;
+                margin: 0.5rem !important;
+                padding: 0.5rem !important;
+                border: 1px solid #ddd !important;
+                background-color: #f9f9f9 !important;
+            }
+
+            /* Style tables */
+            .dataframe, table {
+                font-size: 10px !important;
+                border-collapse: collapse !important;
+                width: 100% !important;
+                margin-bottom: 1rem !important;
+            }
+
+            .dataframe th, .dataframe td, table th, table td {
+                border: 1px solid #ddd !important;
+                padding: 4px !important;
+                text-align: left !important;
+            }
+
+            /* Ensure text is visible */
+            p, div, span {
+                color: black !important;
+                visibility: visible !important;
+            }
+
+            /* Page breaks */
+            .stSubheader {
+                page-break-before: auto !important;
+                margin-top: 1.5rem !important;
+            }
+
+            /* Force content visibility */
+            * {
+                -webkit-print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+        }
+
+        /* Regular screen styles */
+        .print-button {
+            background-color: #ff6b6b;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            border: none;
+            cursor: pointer;
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+
+        .print-button:hover {
+            background-color: #ff5252;
+        }
+
+        /* Print header only visible when printing */
+        .print-header {
+            display: none;
+        }
+
+        @media print {
+            .print-header {
+                display: block !important;
+                text-align: center;
+                border-bottom: 2px solid #ccc;
+                padding-bottom: 10px;
+                margin-bottom: 20px;
+                page-break-after: avoid;
+            }
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
     def display_header(self):
         """Display application header."""
@@ -403,7 +535,7 @@ class StreamlitDashboard:
         if not summary:
             return
 
-        st.subheader("📈 Data Summary")
+        st.subheader("📈 Executive Summary")
 
         # Main metrics row
         col1, col2, col3, col4 = st.columns(4)
@@ -436,10 +568,63 @@ class StreamlitDashboard:
                 help="Number of unique machines/resources"
             )
 
-        # Date range if available
-        if summary['date_range']['start'] and summary['date_range']['end']:
-            st.info(
-                f"📅 Data Period: {summary['date_range']['start'].strftime('%Y-%m-%d')} to {summary['date_range']['end'].strftime('%Y-%m-%d')}")
+        # Date range and key insights
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if summary['date_range']['start'] and summary['date_range']['end']:
+                st.info(
+                    f"📅 **Data Period:** {summary['date_range']['start'].strftime('%Y-%m-%d')} to {summary['date_range']['end'].strftime('%Y-%m-%d')}")
+
+        with col2:
+            # Calculate average cost per machine for insights
+            avg_cost_per_machine = summary['total_cost'] / summary['unique_machines'] if summary[
+                                                                                             'unique_machines'] > 0 else 0
+            st.info(f"💡 **Average Cost per Machine:** ${avg_cost_per_machine:,.2f}")
+
+        # Add print-only summary table with proper string formatting
+        total_cost = summary['total_cost']
+        total_quantity = summary['total_quantity']
+        unique_resource_groups = summary['unique_resource_groups']
+        unique_machines = summary['unique_machines']
+
+        st.markdown(f"""
+        <div class="print-summary" style="display: none;">
+        <style>
+        @media print {{
+            .print-summary {{
+                display: block !important;
+                margin: 20px 0;
+                padding: 15px;
+                border: 1px solid #ddd;
+                background-color: #f9f9f9;
+            }}
+            .print-summary table {{
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            .print-summary th, .print-summary td {{
+                padding: 8px;
+                text-align: left;
+                border: 1px solid #ddd;
+            }}
+            .print-summary th {{
+                background-color: #f2f2f2;
+                font-weight: bold;
+            }}
+        }}
+        </style>
+        <h3>Summary Statistics</h3>
+        <table>
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>Total Cost</td><td>${total_cost:,.2f}</td></tr>
+            <tr><td>Total Usage Hours</td><td>{total_quantity:,.2f}</td></tr>
+            <tr><td>Resource Groups</td><td>{unique_resource_groups}</td></tr>
+            <tr><td>Total Machines</td><td>{unique_machines}</td></tr>
+            <tr><td>Average Cost per Machine</td><td>${avg_cost_per_machine:,.2f}</td></tr>
+        </table>
+        </div>
+        """, unsafe_allow_html=True)
 
     def display_cost_analysis(self, data: AzureInvoiceData):
         """Display cost analysis charts."""
@@ -456,18 +641,69 @@ class StreamlitDashboard:
         # Display charts vertically for better visibility
         if not cost_by_rg.empty:
             fig1 = self.chart_creator.create_cost_by_resource_group_chart(cost_by_rg)
-            st.plotly_chart(fig1, use_container_width=True)
+            # Enhanced config for better PDF export
+            fig1.update_layout(
+                font=dict(size=12),
+                title_font_size=16,
+                margin=dict(l=50, r=50, t=80, b=50)
+            )
+            st.plotly_chart(fig1, use_container_width=True, config={
+                'displayModeBar': True,
+                'displaylogo': False,
+                'modeBarButtonsToAdd': ['downloadSVG'],
+                'toImageButtonOptions': {
+                    'format': 'png',
+                    'filename': 'cost_by_resource_group',
+                    'height': int(Config.CHART_HEIGHT * 1.1),
+                    'width': 1200,
+                    'scale': 2
+                }
+            })
 
         if not cost_by_machine.empty:
             fig2 = self.chart_creator.create_top_machines_chart(cost_by_machine)
-            st.plotly_chart(fig2, use_container_width=True)
+            # Enhanced config for better PDF export
+            fig2.update_layout(
+                font=dict(size=12),
+                title_font_size=16,
+                margin=dict(l=50, r=50, t=80, b=50)
+            )
+            st.plotly_chart(fig2, use_container_width=True, config={
+                'displayModeBar': True,
+                'displaylogo': False,
+                'modeBarButtonsToAdd': ['downloadSVG'],
+                'toImageButtonOptions': {
+                    'format': 'png',
+                    'filename': f'top_{Config.TOP_ITEMS_COUNT}_machines',
+                    'height': int(Config.CHART_HEIGHT * 1.1),
+                    'width': 1200,
+                    'scale': 2
+                }
+            })
 
         # Cost vs Usage analysis - dual-axis comparison
         if not data.df.empty:
             st.subheader("📊 Cost vs Usage Analysis")
 
             fig3 = self.chart_creator.create_cost_usage_comparison_chart(data.df)
-            st.plotly_chart(fig3, use_container_width=True)
+            # Enhanced config for better PDF export
+            fig3.update_layout(
+                font=dict(size=12),
+                title_font_size=16,
+                margin=dict(l=50, r=50, t=80, b=50)
+            )
+            st.plotly_chart(fig3, use_container_width=True, config={
+                'displayModeBar': True,
+                'displaylogo': False,
+                'modeBarButtonsToAdd': ['downloadSVG'],
+                'toImageButtonOptions': {
+                    'format': 'png',
+                    'filename': 'cost_vs_usage_comparison',
+                    'height': int(Config.CHART_HEIGHT * 1.1),
+                    'width': 1200,
+                    'scale': 2
+                }
+            })
             st.info(
                 "💡 **Chart Guide:** Blue bars show cost (left axis), red line shows usage (right axis). This makes it easy to spot cost-inefficient resource groups.")
 
@@ -565,6 +801,29 @@ class StreamlitDashboard:
             st.header("⚙️ Analysis Options")
 
             if data is not None:
+                st.subheader("📋 Export Options")
+
+                # Print/PDF Export button
+                if st.button("🖨️ Print / Export PDF", use_container_width=True):
+                    # Enhanced print functionality with better content visibility
+                    st.markdown("""
+                    <script>
+                    // Wait for content to load then print
+                    setTimeout(function() {
+                        // Ensure all elements are visible for print
+                        document.body.style.visibility = 'visible';
+                        window.print();
+                    }, 500);
+                    </script>
+                    """, unsafe_allow_html=True)
+                    st.success("📄 Print dialog opening... Choose 'Save as PDF' and enable 'Background graphics'!")
+                    st.info(
+                        "💡 **Print Tips:** Enable 'Background graphics' and use Portrait orientation for best results.")
+
+                # Individual chart downloads
+                if st.button("📊 Download All Charts", use_container_width=True):
+                    st.info("💡 **Tip**: Right-click on any chart → 'Download plot as a png' for individual charts")
+
                 st.subheader("🎨 Chart Options")
 
                 # Chart customization options
@@ -600,6 +859,7 @@ class StreamlitDashboard:
             - Resource group breakdowns  
             - Usage analytics
             - Cost vs usage comparisons
+            - PDF export capabilities
 
             **Supported CSV Format:**
             - Date, Cost, Quantity, ResourceGroup, ResourceName columns
