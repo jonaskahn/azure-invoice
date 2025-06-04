@@ -1035,7 +1035,7 @@ class StreamlitDashboard:
         if not summary:
             return
 
-        st.subheader("📈 Executive Summary & Validation")
+        st.header("📈 Executive Summary & Validation")
 
         # Detailed validation status
         if 'cost_validation' in summary:
@@ -1202,7 +1202,7 @@ class StreamlitDashboard:
 
     def display_cost_category_analysis(self, data: AzureInvoiceData):
         """Display cost category analysis."""
-        st.subheader("💰 Cost Category Analysis")
+        st.header("💰 Cost Category Analysis")
 
         if not data.cost_analyzer:
             st.error("Cost analyzer not available - missing required columns")
@@ -1241,7 +1241,7 @@ class StreamlitDashboard:
 
     def display_service_provider_analysis(self, data: AzureInvoiceData):
         """Display service provider analysis."""
-        st.subheader("🏢 Service Provider Analysis")
+        st.header("🏢 Service Provider Analysis")
 
         if not data.cost_analyzer:
             return
@@ -1276,7 +1276,7 @@ class StreamlitDashboard:
 
     def display_efficiency_analysis(self, data: AzureInvoiceData):
         """Display efficiency analysis."""
-        st.subheader("⚡ Resource Efficiency Analysis")
+        st.header("⚡ Resource Efficiency Analysis")
 
         efficiency_data = data.get_efficiency_metrics()
 
@@ -1395,6 +1395,10 @@ class StreamlitDashboard:
             # Machine selection using radio buttons for better UX
             machine_options = machines_data['ResourceName'].tolist()
 
+
+            # Display machines table
+            st.dataframe(display_machines, use_container_width=True, hide_index=True)
+
             # Create a more compact selection method
             selected_machine = st.selectbox(
                 "🖥️ **Select Machine for Detailed Analysis:**",
@@ -1404,8 +1408,6 @@ class StreamlitDashboard:
                 help="Select a machine to see its cost breakdown by category"
             )
 
-            # Display machines table
-            st.dataframe(display_machines, use_container_width=True, hide_index=True)
 
         except Exception as e:
             st.error(f"Error formatting machine data: {str(e)}")
@@ -1564,7 +1566,7 @@ class StreamlitDashboard:
 
     def display_traditional_analysis(self, data: AzureInvoiceData):
         """Display traditional resource group and machine analysis."""
-        st.subheader("🏗️ Resource Analysis")
+        st.header("🏗️ Resource Analysis")
 
         # Get traditional data
         cost_by_rg = data.get_cost_by_resource_group()
@@ -1591,7 +1593,7 @@ class StreamlitDashboard:
 
     def display_uncategorized_analysis(self, data: AzureInvoiceData):
         """Display detailed analysis of uncategorized items."""
-        st.subheader("🔍 Uncategorized Items Analysis")
+        st.header("🔍 Uncategorized Items Analysis")
 
         if not data.cost_analyzer:
             st.info("Cost analyzer not available for uncategorized analysis.")
@@ -1648,7 +1650,7 @@ class StreamlitDashboard:
                 f"✅ **Minimal Uncategorized Costs**: Only {uncategorized_percentage:.1f}% uncategorized. Excellent categorization coverage!")
 
         # Show uncategorized items in a simple table
-        st.markdown("### 📋 Uncategorized Items Summary")
+        st.subheader("📋 Uncategorized Items Summary")
         if not uncategorized_items.empty:
             # Group by service characteristics for summary
             service_breakdown = uncategorized_items.groupby(['ConsumedService', 'MeterCategory']).agg({
@@ -1667,7 +1669,7 @@ class StreamlitDashboard:
 
     def display_detailed_tables(self, data: AzureInvoiceData):
         """Display detailed data tables."""
-        st.subheader("📊 Detailed Data Tables")
+        st.header("📊 Detailed Data Tables")
 
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "💰 Cost Categories",
@@ -1725,14 +1727,14 @@ class StreamlitDashboard:
     def display_sidebar_controls(self, data: Optional[AzureInvoiceData]):
         """Display enhanced sidebar with controls and options."""
         with st.sidebar:
-            st.header("⚙️ Analysis Options")
+            st.subheader("⚙️ Analysis Options")
 
             if data is not None:
                 # Enhanced validation summary in sidebar
                 if data.cost_analyzer:
                     validation = data.cost_analyzer.validate_cost_reconciliation()
 
-                    st.subheader("🔍 Cost Reconciliation")
+                    st.markdown("**🔍 Cost Reconciliation**")
 
                     # Key reconciliation metrics
                     col1, col2 = st.columns(2)
@@ -1765,7 +1767,7 @@ class StreamlitDashboard:
 
                     st.divider()
 
-                st.subheader("📋 Export Options")
+                st.markdown("**📋 Export Options**")
 
                 if st.button("🖨️ Print / Export PDF", use_container_width=True):
                     st.markdown("""
@@ -1778,7 +1780,7 @@ class StreamlitDashboard:
                     """, unsafe_allow_html=True)
                     st.success("📄 Print dialog opening...")
 
-                st.subheader("🔍 Interactive Analysis")
+                st.markdown("**🔍 Interactive Analysis**")
 
                 # Quick stats about drill-down capability with error handling
                 try:
@@ -1803,7 +1805,7 @@ class StreamlitDashboard:
                 except Exception as e:
                     st.warning(f"Unable to load drill-down stats: {str(e)}")
 
-                st.subheader("🎨 Chart Options")
+                st.markdown("**🎨 Chart Options**")
 
                 chart_height = st.slider("Chart Height", 300, 800, Config.CHART_HEIGHT)
                 Config.CHART_HEIGHT = chart_height
@@ -1814,7 +1816,7 @@ class StreamlitDashboard:
             else:
                 st.info("Upload a CSV file to access analysis options.")
 
-            st.subheader("ℹ️ About")
+            st.markdown("**ℹ️ About**")
             st.markdown("""
             **Azure Invoice Analyzer Pro**
 
