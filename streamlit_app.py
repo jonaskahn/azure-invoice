@@ -19,8 +19,8 @@ class Config:
     # Chart Dimensions
     CHART_WIDTH = 800
     CHART_HEIGHT = 500
-    LARGE_CHART_WIDTH = 1000
-    SMALL_CHART_HEIGHT = 400
+    LARGE_CHART_WIDTH = 1200
+    SMALL_CHART_HEIGHT = 600
 
     # Text and Rotation
     LABEL_FONT_SIZE = 12
@@ -148,7 +148,7 @@ class StreamlitChartCreator:
             },
             xaxis_title='Resource Group',
             yaxis_title='Cost (USD)',
-            height=Config.CHART_HEIGHT,
+            height=int(Config.CHART_HEIGHT * 1.1),
             showlegend=False,
             xaxis={'tickangle': Config.ROTATION_ANGLE},
             plot_bgcolor='white',
@@ -193,7 +193,7 @@ class StreamlitChartCreator:
             },
             xaxis_title='Machine (ResourceName)',
             yaxis_title='Cost (USD)',
-            height=Config.CHART_HEIGHT,
+            height=int(Config.CHART_HEIGHT * 1.1),
             showlegend=False,
             xaxis={'tickangle': Config.ROTATION_ANGLE},
             plot_bgcolor='white',
@@ -238,7 +238,7 @@ class StreamlitChartCreator:
             },
             xaxis_title='Machine (ResourceName)',
             yaxis_title='Cost (USD)',
-            height=Config.SMALL_CHART_HEIGHT,
+            height=int(Config.SMALL_CHART_HEIGHT * 1.5),
             showlegend=False,
             xaxis={'tickangle': Config.ROTATION_ANGLE},
             plot_bgcolor='white',
@@ -320,7 +320,7 @@ class StreamlitChartCreator:
                 'xanchor': 'center',
                 'font': {'size': 18}
             },
-            height=Config.CHART_HEIGHT,
+            height=int(Config.CHART_HEIGHT * 1.5),
             showlegend=True,
             legend=dict(
                 yanchor="top",
@@ -357,6 +357,8 @@ class StreamlitDashboard:
         st.markdown("""
         **Comprehensive analysis of Azure billing data with interactive visualizations**
 
+        Upload your Azure invoice CSV file to get detailed cost breakdowns, usage analytics, 
+        and resource group insights.
         """)
         st.divider()
 
@@ -566,7 +568,13 @@ class StreamlitDashboard:
                 st.subheader("🎨 Chart Options")
 
                 # Chart customization options
-                chart_height = st.slider("Chart Height", 300, 800, Config.CHART_HEIGHT)
+                chart_height = st.slider(
+                    "Chart Height",
+                    300,
+                    800,
+                    Config.CHART_HEIGHT,
+                    help="Base chart height in pixels (actual height will be +10% for better visibility)"
+                )
                 Config.CHART_HEIGHT = chart_height
 
                 # Top items count control
