@@ -1440,6 +1440,9 @@ class StreamlitDashboard:
             # Create clickable machine selection
             st.markdown("**Click on a machine name below to see its detailed cost breakdown:**")
 
+            # Display machines table
+            st.dataframe(display_machines, use_container_width=True, hide_index=True)
+
             # Machine selection using radio buttons for better UX
             machine_options = machines_data['ResourceName'].tolist()
 
@@ -1451,9 +1454,6 @@ class StreamlitDashboard:
                     x: "Choose a machine..." if x == "" else f"{x} (${machines_data[machines_data['ResourceName'] == x]['Cost'].iloc[0]:,.2f})" if x else x,
                 help="Select a machine to see its cost breakdown by category"
             )
-
-            # Display machines table
-            st.dataframe(display_machines, use_container_width=True, hide_index=True)
 
         except Exception as e:
             st.error(f"Error formatting machine data: {str(e)}")
