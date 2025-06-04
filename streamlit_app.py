@@ -385,18 +385,32 @@ class AzureInvoiceData:
 
         # Filter out rows with NaN values in ResourceName
         df_classified = df_classified.dropna(subset=['ResourceName'])
+
+        # Get exact matches first
         machine_data = df_classified[df_classified['ResourceName'] == resource_name]
 
-        if machine_data.empty:
+        # Also look for related resources (disks, network interfaces, etc. that might be associated with this VM)
+        # Common patterns: vm-name-disk, vm-name-nic, vm-name_OsDisk, etc.
+        related_data = df_classified[
+            (df_classified['ResourceName'].str.contains(resource_name, case=False, na=False)) |
+            (df_classified['ResourceName'].str.startswith(resource_name + '-', na=False)) |
+            (df_classified['ResourceName'].str.startswith(resource_name + '_', na=False))
+            ]
+
+        # Combine exact and related matches, removing duplicates
+        combined_data = pd.concat([machine_data, related_data]).drop_duplicates()
+
+        if combined_data.empty:
             return pd.DataFrame()
 
         # Group by cost category
-        category_breakdown = machine_data.groupby('CostCategory').agg({
+        category_breakdown = combined_data.groupby('CostCategory').agg({
             'Cost': 'sum',
             'Quantity': 'sum',
             'ConsumedService': lambda x: ', '.join(x.dropna().astype(str).unique()),
             'MeterCategory': lambda x: ', '.join(x.dropna().astype(str).unique()),
-            'MeterSubcategory': lambda x: ', '.join(x.dropna().astype(str).unique())
+            'MeterSubcategory': lambda x: ', '.join(x.dropna().astype(str).unique()),
+            'ResourceName': lambda x: ', '.join(x.dropna().astype(str).unique())  # Show all related resources
         }).round(4).reset_index()
 
         # Calculate percentages
@@ -407,6 +421,40 @@ class AzureInvoiceData:
         category_breakdown = category_breakdown.sort_values('Cost', ascending=False)
 
         return category_breakdown
+
+    def get_machine_related_resources(self, resource_name: str) -> pd.DataFrame:
+        """Get all resources related to a specific machine (including disks, NICs, etc.)."""
+        if self.df is None or self.df.empty:
+            return pd.DataFrame()
+
+        if 'ResourceName' not in self.df.columns:
+            return pd.DataFrame()
+
+        # Look for all resources that might be related to this machine
+        related_mask = (
+                (self.df['ResourceName'] == resource_name) |
+                (self.df['ResourceName'].str.contains(resource_name, case=False, na=False)) |
+                (self.df['ResourceName'].str.startswith(resource_name + '-', na=False)) |
+                (self.df['ResourceName'].str.startswith(resource_name + '_', na=False))
+        )
+
+        related_resources = self.df[related_mask]
+
+        if related_resources.empty:
+            return pd.DataFrame()
+
+        # Group by actual resource name to show what's included
+        resource_summary = related_resources.groupby('ResourceName').agg({
+            'Cost': 'sum',
+            'Quantity': 'sum',
+            'ConsumedService': lambda x: ', '.join(x.dropna().astype(str).unique()),
+            'MeterCategory': lambda x: ', '.join(x.dropna().astype(str).unique()),
+            'MeterSubcategory': lambda x: ', '.join(x.dropna().astype(str).unique())
+        }).round(4).reset_index()
+
+        resource_summary = resource_summary.sort_values('Cost', ascending=False)
+
+        return resource_summary
 
     def get_all_resource_groups(self) -> list:
         """Get list of all resource groups."""
@@ -1395,10 +1443,6 @@ class StreamlitDashboard:
             # Machine selection using radio buttons for better UX
             machine_options = machines_data['ResourceName'].tolist()
 
-
-            # Display machines table
-            st.dataframe(display_machines, use_container_width=True, hide_index=True)
-
             # Create a more compact selection method
             selected_machine = st.selectbox(
                 "🖥️ **Select Machine for Detailed Analysis:**",
@@ -1408,6 +1452,8 @@ class StreamlitDashboard:
                 help="Select a machine to see its cost breakdown by category"
             )
 
+            # Display machines table
+            st.dataframe(display_machines, use_container_width=True, hide_index=True)
 
         except Exception as e:
             st.error(f"Error formatting machine data: {str(e)}")
