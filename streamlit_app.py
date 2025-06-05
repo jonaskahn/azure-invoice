@@ -249,11 +249,22 @@ class AzureInvoiceData:
                 self.df[col] = 'Unknown'
                 st.warning(f"Missing column '{col}' - created with default values")
 
-    def get_cost_by_resource_group(self) -> pd.Series:
-        """Calculate total cost grouped by ResourceGroup."""
+    def get_cost_by_resource_group(self, use_classified: bool=True) -> pd.Series:
+        """Calculate total cost grouped by ResourceGroup.
+        
+        Args:
+            use_classified: If True, uses classified data when available (default: True)
+        """
         if self.df is None or 'ResourceGroup' not in self.df.columns:
             return pd.Series(dtype=float)
-        return self.df.groupby('ResourceGroup')['Cost'].sum().sort_values(ascending=False)
+            
+        # Use classified data if available and requested
+        if self.cost_analyzer and use_classified:
+            df_to_use = self.cost_analyzer.classify_costs()
+        else:
+            df_to_use = self.df.copy()
+            
+        return df_to_use.groupby('ResourceGroup')['Cost'].sum().sort_values(ascending=False)
 
     def _get_unified_machine_costs(self, include_related: bool=True) -> Dict[str, float]:
         """Unified method to calculate machine costs with consistent logic across all sections."""
@@ -320,26 +331,93 @@ class AzureInvoiceData:
             
         return pd.Series(machine_costs).sort_values(ascending=False)
 
-    def get_usage_by_resource_group(self) -> pd.Series:
-        """Calculate total usage grouped by ResourceGroup."""
+    def get_usage_by_resource_group(self, use_classified: bool=True) -> pd.Series:
+        """Calculate total usage grouped by ResourceGroup.
+        
+        Args:
+            use_classified: If True, uses classified data when available (default: True)
+        """
         if self.df is None or 'ResourceGroup' not in self.df.columns:
             return pd.Series(dtype=float)
-        return self.df.groupby('ResourceGroup')['Quantity'].sum().sort_values(ascending=False)
+            
+        # Use classified data if available and requested
+        if self.cost_analyzer and use_classified:
+            df_to_use = self.cost_analyzer.classify_costs()
+        else:
+            df_to_use = self.df.copy()
+            
+        return df_to_use.groupby('ResourceGroup')['Quantity'].sum().sort_values(ascending=False)
 
-    def get_usage_by_machine(self) -> pd.Series:
-        """Calculate total usage grouped by ResourceName (machine)."""
+    def get_usage_by_machine(self, include_related: bool=True, use_classified: bool=True) -> pd.Series:
+        """Calculate total usage using unified machine logic.
+        
+        Args:
+            include_related: If True, includes related resources in machine calculations
+            use_classified: If True, uses classified data when available (default: True)
+        """
         if self.df is None or 'ResourceName' not in self.df.columns:
             return pd.Series(dtype=float)
-        return self.df.groupby('ResourceName')['Quantity'].sum().sort_values(ascending=False)
+            
+        # Use the same data source as unified calculation
+        if self.cost_analyzer and use_classified:
+            df_to_use = self.cost_analyzer.classify_costs()
+        else:
+            df_to_use = self.df.copy()
+            
+        # Calculate quantities for each machine using the same logic as unified costs
+        machine_quantities = {}
+        clean_df = df_to_use.dropna(subset=['ResourceName'])
+        
+        if clean_df.empty:
+            return pd.Series(dtype=float)
+            
+        # Get machine names the same way as unified costs
+        machine_names = clean_df['ResourceName'].unique()
+        
+        for machine_name in machine_names:
+            # Skip infrastructure resources if including related
+            if include_related and any(suffix in machine_name.lower() for suffix in ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot']):
+                continue
+                
+            if include_related:
+                # Get exact matches first
+                machine_data = clean_df[clean_df['ResourceName'] == machine_name]
+                
+                # Also look for related resources
+                related_data = clean_df[
+                    (clean_df['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                    (clean_df['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
+                    (clean_df['ResourceName'].str.startswith(machine_name + '_', na=False))
+                ]
+                
+                # Combine exact and related matches, removing duplicates
+                combined_data = pd.concat([machine_data, related_data]).drop_duplicates()
+                machine_quantities[machine_name] = combined_data['Quantity'].sum()
+            else:
+                # Simple exact match only
+                machine_data = clean_df[clean_df['ResourceName'] == machine_name]
+                machine_quantities[machine_name] = machine_data['Quantity'].sum()
+                
+        return pd.Series(machine_quantities).sort_values(ascending=False)
 
-    def get_cost_by_resource_group_and_machine(self) -> pd.DataFrame:
-        """Get cost breakdown by resource group and machine."""
+    def get_cost_by_resource_group_and_machine(self, use_classified: bool=True) -> pd.DataFrame:
+        """Get cost breakdown by resource group and machine.
+        
+        Args:
+            use_classified: If True, uses classified data when available (default: True)
+        """
         if (self.df is None or
                 'ResourceGroup' not in self.df.columns or
                 'ResourceName' not in self.df.columns):
             return pd.DataFrame()
 
-        return (self.df.groupby(['ResourceGroup', 'ResourceName'])['Cost']
+        # Use classified data if available and requested
+        if self.cost_analyzer and use_classified:
+            df_to_use = self.cost_analyzer.classify_costs()
+        else:
+            df_to_use = self.df.copy()
+
+        return (df_to_use.groupby(['ResourceGroup', 'ResourceName'])['Cost']
                 .sum()
                 .reset_index()
                 .sort_values(['ResourceGroup', 'Cost'], ascending=[True, False]))
@@ -1781,7 +1859,8 @@ class StreamlitDashboard:
         """Display comprehensive efficiency analysis with enhanced insights."""
         st.header("⚡ Resource Efficiency Analysis")
 
-        efficiency_data = data.get_efficiency_metrics()
+        with st.spinner('⚡ Calculating resource efficiency metrics...'):
+            efficiency_data = data.get_efficiency_metrics(include_related=True)
 
         if efficiency_data.empty:
             st.warning("No efficiency data available (requires quantity > 0).")
@@ -1871,19 +1950,22 @@ class StreamlitDashboard:
         # Resource Group and Machine Analysis
         st.markdown("### 🏗️ Resource Group & Machine Breakdown")
         
-        # Get detailed breakdown with resource groups
-        resource_breakdown = data.get_efficiency_resource_breakdown()
+        # Get detailed breakdown with resource groups - show loading indicator
+        with st.spinner('🔄 Calculating resource group and machine breakdown...'):
+            resource_breakdown = data.get_efficiency_resource_breakdown(include_related=True)
         
         if not resource_breakdown.empty:
             # Resource Group Summary - First Row
             st.markdown("#### 📊 Cost by Resource Group")
-            rg_summary = resource_breakdown.groupby('ResourceGroup').agg({
-                'Cost': 'sum',
-                'Quantity': 'sum',
-                'ResourceName': 'count'
-            }).round(2)
-            rg_summary['AvgEfficiency'] = rg_summary['Cost'] / rg_summary['Quantity']
-            rg_summary = rg_summary.sort_values('Cost', ascending=False)
+            
+            with st.spinner('📊 Processing resource group summaries...'):
+                rg_summary = resource_breakdown.groupby('ResourceGroup').agg({
+                    'Cost': 'sum',
+                    'Quantity': 'sum',
+                    'ResourceName': 'count'
+                }).round(2)
+                rg_summary['AvgEfficiency'] = rg_summary['Cost'] / rg_summary['Quantity']
+                rg_summary = rg_summary.sort_values('Cost', ascending=False)
             
             # Format for display
             rg_display = rg_summary.copy()
@@ -1917,37 +1999,39 @@ class StreamlitDashboard:
         st.markdown("#### 📋 Complete Resource & Group Breakdown")
         
         if not resource_breakdown.empty:
+            with st.spinner('🔄 Formatting detailed breakdown table...'):
 
-            # Add efficiency categories to the display
-            def categorize_efficiency(score):
-                if score > avg_efficiency * 1.5:
-                    return "🔴 High Cost"
-                elif score > efficiency_median:
-                    return "🟡 Above Average"
-                else:
-                    return "🟢 Efficient"
-            
-            display_data = resource_breakdown.copy()
-            display_data['Category'] = display_data['EfficiencyScore'].apply(categorize_efficiency)
-            display_data['Cost'] = display_data['Cost'].apply(lambda x: f"${x:,.2f}")
-            display_data['Quantity'] = display_data['Quantity'].apply(lambda x: f"{x:,.0f}")
-            display_data['CostPerUnit'] = display_data['CostPerUnit'].apply(lambda x: f"${x:.4f}")
-            display_data['EfficiencyScore'] = display_data['EfficiencyScore'].apply(lambda x: f"${x:.4f}")
-            
-            # Reorder and rename columns
-            display_data = display_data[['Category', 'ResourceGroup', 'ResourceName', 'Cost', 'Quantity', 'CostPerUnit', 'RelatedResources', 'PrimaryServices']]
-            display_data.columns = ['Efficiency', 'Resource Group', 'Machine/Resource', 'Total Cost', 'Hours', 'Cost/Hour', 'Related', 'Primary Services']
+                # Add efficiency categories to the display
+                def categorize_efficiency(score):
+                    if score > avg_efficiency * 1.5:
+                        return "🔴 High Cost"
+                    elif score > efficiency_median:
+                        return "🟡 Above Average"
+                    else:
+                        return "🟢 Efficient"
+                
+                display_data = resource_breakdown.copy()
+                display_data['Category'] = display_data['EfficiencyScore'].apply(categorize_efficiency)
+                display_data['Cost'] = display_data['Cost'].apply(lambda x: f"${x:,.2f}")
+                display_data['Quantity'] = display_data['Quantity'].apply(lambda x: f"{x:,.0f}")
+                display_data['CostPerUnit'] = display_data['CostPerUnit'].apply(lambda x: f"${x:.4f}")
+                display_data['EfficiencyScore'] = display_data['EfficiencyScore'].apply(lambda x: f"${x:.4f}")
+                
+                # Reorder and rename columns
+                display_data = display_data[['Category', 'ResourceGroup', 'ResourceName', 'Cost', 'Quantity', 'CostPerUnit', 'RelatedResources', 'PrimaryServices']]
+                display_data.columns = ['Efficiency', 'Resource Group', 'Machine/Resource', 'Total Cost', 'Hours', 'Cost/Hour', 'Related', 'Primary Services']
             
             st.dataframe(display_data, use_container_width=True, hide_index=True)
             
             # Cost distribution insights
             st.markdown("#### 💡 Resource Group Insights")
             
-            # Calculate resource group statistics
-            total_cost_all = resource_breakdown['Cost'].sum()
-            top_rg_cost = rg_summary.iloc[0]['Cost'] if not rg_summary.empty else 0
-            top_rg_name = rg_summary.index[0] if not rg_summary.empty else 'Unknown'
-            top_rg_percentage = (top_rg_cost / total_cost_all * 100) if total_cost_all > 0 else 0
+            with st.spinner('💡 Calculating resource group insights...'):
+                # Calculate resource group statistics
+                total_cost_all = resource_breakdown['Cost'].sum()
+                top_rg_cost = rg_summary.iloc[0]['Cost'] if not rg_summary.empty else 0
+                top_rg_name = rg_summary.index[0] if not rg_summary.empty else 'Unknown'
+                top_rg_percentage = (top_rg_cost / total_cost_all * 100) if total_cost_all > 0 else 0
             
             col1, col2, col3 = st.columns(3)
             
@@ -2124,7 +2208,8 @@ class StreamlitDashboard:
 
         # Get machines for selected resource group with error handling
         try:
-            machines_data = data.get_machines_by_resource_group(selected_rg)
+            with st.spinner(f'🔄 Loading machines for resource group: {selected_rg}...'):
+                machines_data = data.get_machines_by_resource_group(selected_rg)
         except Exception as e:
             st.error(f"Error loading machines for resource group '{selected_rg}': {str(e)}")
             return
@@ -2173,7 +2258,8 @@ class StreamlitDashboard:
             st.markdown("---")
 
             # Get machine cost breakdown by category
-            machine_breakdown = data.get_machine_cost_breakdown(selected_machine)
+            with st.spinner(f'🔍 Analyzing cost breakdown for: {selected_machine}...'):
+                machine_breakdown = data.get_machine_cost_breakdown(selected_machine)
 
             if machine_breakdown.empty:
                 st.warning(f"No cost breakdown available for machine: {selected_machine}")
@@ -2462,8 +2548,8 @@ class StreamlitDashboard:
         st.header("🏗️ Resource Analysis")
 
         # Get traditional data
-        cost_by_rg = data.get_cost_by_resource_group()
-        cost_by_machine = data.get_cost_by_machine()
+        cost_by_rg = data.get_cost_by_resource_group(use_classified=True)
+        cost_by_machine = data.get_cost_by_machine(include_related=True)
 
         if cost_by_rg.empty and cost_by_machine.empty:
             st.warning("No resource data available for analysis.")
@@ -2481,7 +2567,12 @@ class StreamlitDashboard:
 
         # Cost vs Usage analysis
         if not data.df.empty:
-            fig3 = self.chart_creator.create_cost_usage_comparison_chart(data.df)
+            # Use classified data for consistency if available
+            if data.cost_analyzer:
+                df_for_chart = data.cost_analyzer.classify_costs()
+            else:
+                df_for_chart = data.df
+            fig3 = self.chart_creator.create_cost_usage_comparison_chart(df_for_chart)
             st.plotly_chart(fig3, use_container_width=True)
 
         # Chart calculation explanations
@@ -2630,7 +2721,7 @@ class StreamlitDashboard:
                     st.info("No service provider data available.")
 
         with tab3:
-            cost_by_rg = data.get_cost_by_resource_group()
+            cost_by_rg = data.get_cost_by_resource_group(use_classified=True)
             if not cost_by_rg.empty:
                 df_display = pd.DataFrame({
                     'Resource Group': cost_by_rg.index,
@@ -2641,7 +2732,7 @@ class StreamlitDashboard:
                 st.info("No resource group data available.")
 
         with tab4:
-            cost_by_machine = data.get_cost_by_machine()
+            cost_by_machine = data.get_cost_by_machine(include_related=True)
             if not cost_by_machine.empty:
                 df_display = pd.DataFrame({
                     'Machine': cost_by_machine.index,
@@ -2652,7 +2743,7 @@ class StreamlitDashboard:
                 st.info("No machine data available.")
 
         with tab5:
-            efficiency_data = data.get_efficiency_metrics()
+            efficiency_data = data.get_efficiency_metrics(include_related=True)
             if not efficiency_data.empty:
                 st.dataframe(efficiency_data.head(20), use_container_width=True)
             else:
