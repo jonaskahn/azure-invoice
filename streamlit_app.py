@@ -1282,6 +1282,41 @@ class StreamlitDashboard:
         fig_bar = self.chart_creator.create_cost_category_bar_chart(category_summary)
         st.plotly_chart(fig_bar, use_container_width=True)
 
+        # Chart calculation explanations
+        with st.expander("📊 **How These Charts Are Calculated**", expanded=False):
+            st.markdown("""
+            **Cost Category Analysis Breakdown:**
+            
+            **📈 Pie Chart Calculations:**
+            - **Total Cost**: Sum of all 'Cost' values for each category: `SUM(Cost) GROUP BY CostCategory`
+            - **Percentage**: Each category's cost divided by total cost: `(Category Cost / Total Cost) × 100`
+            - **Values Shown**: Dollar amount and percentage for each slice
+            
+            **📊 Bar Chart Calculations:**
+            - **X-axis (Cost)**: Same total cost per category as pie chart
+            - **Text Labels**: Shows both dollar amount and percentage: `$X,XXX.XX (XX.X%)`
+            - **Hover Info**: Includes record count (number of line items in each category)
+            
+            **🏷️ Category Classification Rules:**
+            - **Managed Disks**: Premium/Standard SSD/HDD Managed Disks subcategories
+            - **VM Compute**: Microsoft.Compute service MINUS disk costs
+            - **CDN**: Content Delivery Network meter category
+            - **Network/IP**: Virtual Network meter category
+            - **Backup**: Microsoft.RecoveryServices consumed service
+            - **Load Balancer**: Load Balancer meter category
+            - **Other Storage**: Storage category MINUS managed disks
+            - **Bandwidth**: Bandwidth meter category
+            - **Key Vault**: Microsoft.KeyVault consumed service
+            - **Other**: All remaining costs not classified above
+            
+            **📊 Data Processing Steps:**
+            1. Group invoice data by cost category
+            2. Calculate total cost: `df.groupby('CostCategory')['Cost'].sum()`
+            3. Calculate record count: `df.groupby('CostCategory')['Cost'].count()`
+            4. Calculate percentages: `(category_total / grand_total) * 100`
+            5. Sort by total cost descending for display
+            """)
+
         # Cost insights
         top_category = category_summary.iloc[0]
         st.info(
@@ -1303,6 +1338,36 @@ class StreamlitDashboard:
         # Service provider chart
         fig = self.chart_creator.create_service_provider_chart(provider_summary)
         st.plotly_chart(fig, use_container_width=True)
+
+        # Chart calculation explanations
+        with st.expander("📊 **How Service Provider Chart Is Calculated**", expanded=False):
+            st.markdown("""
+            **Service Provider Analysis Breakdown:**
+            
+            **📊 Bar Chart Calculations:**
+            - **Y-axis (Cost)**: Total cost per Azure service: `SUM(Cost) GROUP BY ConsumedService`
+            - **X-axis**: Azure service provider names (top 10 by cost)
+            - **Text Labels**: Dollar amounts displayed above each bar: `$X,XXX.XX`
+            - **Hover Info**: Service name, total cost, and number of records
+            
+            **🔍 Data Source Fields:**
+            - **ConsumedService**: Azure service that generated the cost (e.g., Microsoft.Compute, Microsoft.Storage)
+            - **Cost**: Dollar amount charged for each service usage
+            - **Record_Count**: Number of individual billing line items per service
+            
+            **📈 Processing Logic:**
+            1. Group all invoice data by 'ConsumedService' field
+            2. Sum costs: `df.groupby('ConsumedService')['Cost'].sum()`
+            3. Count records: `df.groupby('ConsumedService')['Cost'].count()`
+            4. Calculate percentages: `(service_total / grand_total) * 100`
+            5. Sort by total cost descending
+            6. Display top 10 services by cost
+            
+            **💡 Understanding the Data:**
+            - Higher bars = More expensive Azure services
+            - Record count = How many billing entries (frequency of usage)
+            - Percentage = What portion of total bill each service represents
+            """)
 
         # Provider summary table
         col1, col2 = st.columns([2, 1])
@@ -1335,6 +1400,49 @@ class StreamlitDashboard:
         # Efficiency chart
         fig = self.chart_creator.create_efficiency_metrics_chart(efficiency_data)
         st.plotly_chart(fig, use_container_width=True)
+
+        # Chart calculation explanations
+        with st.expander("📊 **How Efficiency Chart Is Calculated**", expanded=False):
+            st.markdown("""
+            **Resource Efficiency Analysis Breakdown:**
+            
+            **📊 Dual-Axis Chart Calculations:**
+            - **Left Y-axis (Red Bars)**: Total cost per resource: `SUM(Cost) GROUP BY ResourceName`
+            - **Right Y-axis (Blue Line)**: Cost per unit efficiency: `Total Cost ÷ Total Quantity`
+            - **X-axis**: Resource names (top 15 by total cost)
+            
+            **🧮 Efficiency Score Formula:**
+            ```
+            EfficiencyScore = Total_Cost ÷ Total_Quantity
+            Where:
+            - Total_Cost = Sum of all costs for that resource
+            - Total_Quantity = Sum of all usage quantities (hours, GB, etc.)
+            ```
+            
+            **🔍 Data Requirements:**
+            - Only includes resources where `Quantity > 0`
+            - Filters out resources with zero or null usage quantities
+            - Shows top 15 resources by total cost
+            
+            **📈 Processing Steps:**
+            1. Filter data: `df[df['Quantity'] > 0]`
+            2. Group by resource: `GROUP BY ResourceName`
+            3. Calculate totals: `SUM(Cost)`, `SUM(Quantity)`
+            4. Calculate efficiency: `Cost ÷ Quantity`
+            5. Sort by total cost descending
+            6. Take top 15 resources
+            
+            **💡 Interpreting the Results:**
+            - **High bars + High line**: Expensive resources with high cost per unit (review needed)
+            - **High bars + Low line**: Expensive but efficient resources (good value)
+            - **Low bars + High line**: Cheap but inefficient resources (potential optimization)
+            - **Low bars + Low line**: Cheap and efficient resources (optimal)
+            
+            **⚠️ Cost Per Unit Meanings:**
+            - Virtual Machines: $/hour of compute time
+            - Storage: $/GB or $/operation
+            - Network: $/GB transferred or $/hour uptime
+            """)
 
         # Efficiency insights
         col1, col2 = st.columns(2)
@@ -1501,6 +1609,50 @@ class StreamlitDashboard:
                 fig_details = self.chart_creator.create_machine_details_chart(machine_breakdown, selected_machine)
                 st.plotly_chart(fig_details, use_container_width=True)
 
+            # Chart calculation explanations for machine breakdown
+            with st.expander("📊 **How Machine Cost Breakdown Charts Are Calculated**", expanded=False):
+                st.markdown("""
+                **Machine Cost Analysis Breakdown:**
+                
+                **🥧 Pie Chart (Left) Calculations:**
+                - **Slices**: Each cost category for this specific machine
+                - **Values**: Total cost per category: `SUM(Cost) WHERE ResourceName = selected_machine GROUP BY CostCategory`
+                - **Percentages**: Each category's cost divided by machine total: `(Category Cost / Machine Total) × 100`
+                - **Data Source**: Filters all invoice data to this machine only
+                
+                **📊 Bar Chart (Right) Calculations:**
+                - **Y-axis**: Same cost categories as pie chart
+                - **X-axis**: Cost amounts in dollars
+                - **Sorting**: Categories ordered by cost (highest first)
+                - **Additional Info**: Shows service provider and quantity details
+                
+                **🔍 Machine Data Processing Steps:**
+                1. Filter all invoice data: `df[df['ResourceName'] == selected_machine]`
+                2. Classify costs using same category rules as main analysis
+                3. Group by cost category: `GROUP BY CostCategory`
+                4. Calculate totals: `SUM(Cost)`, `SUM(Quantity)`
+                5. Calculate percentages: `(category_cost / machine_total) × 100`
+                
+                **📈 What Each Number Means:**
+                - **Total Cost**: All charges for this machine across all Azure services
+                - **Category Cost**: How much this machine spent on each type of service
+                - **Percentage**: What portion of this machine's costs each category represents
+                - **Quantity**: Usage amount (hours, GB, operations) for each category
+                
+                **💡 Understanding Machine Categories:**
+                - **VM Compute**: The virtual machine instance costs (CPU, RAM)
+                - **Managed Disks**: Storage attached to this machine
+                - **Network/IP**: Public IP addresses and network resources
+                - **Backup**: Backup services for this machine
+                - **Other**: Any additional services associated with this machine
+                
+                **🚀 Optimization Opportunities:**
+                - High **VM Compute** costs → Consider resizing or reserved instances
+                - High **Managed Disks** costs → Review disk tiers (Premium vs Standard)
+                - High **Network/IP** costs → Review public IP usage and data transfer
+                - High **Backup** costs → Review backup policies and retention
+                """)
+
             # Category breakdown table
             st.markdown("#### 📊 Category Breakdown Table")
 
@@ -1636,6 +1788,48 @@ class StreamlitDashboard:
         if not data.df.empty:
             fig3 = self.chart_creator.create_cost_usage_comparison_chart(data.df)
             st.plotly_chart(fig3, use_container_width=True)
+
+        # Chart calculation explanations
+        with st.expander("📊 **How Resource Analysis Charts Are Calculated**", expanded=False):
+            st.markdown("""
+            **Resource Analysis Breakdown:**
+            
+            **🏗️ Cost by Resource Group Chart:**
+            - **Y-axis**: Total cost per resource group: `SUM(Cost) GROUP BY ResourceGroup`
+            - **X-axis**: Resource group names (ordered by total cost)
+            - **Data Source**: Groups all resources by their ResourceGroup field
+            - **Calculation**: `df.groupby('ResourceGroup')['Cost'].sum()`
+            
+            **🖥️ Top Machines Chart:**
+            - **Y-axis**: Total cost per machine/resource: `SUM(Cost) GROUP BY ResourceName`
+            - **X-axis**: Resource/machine names (top machines by cost)
+            - **Sorting**: Descending by total cost (most expensive first)
+            - **Calculation**: `df.groupby('ResourceName')['Cost'].sum().sort_values(ascending=False)`
+            
+            **📊 Cost vs Usage Comparison Chart:**
+            - **Left Y-axis (Bars)**: Total cost per resource group
+            - **Right Y-axis (Line)**: Total usage hours per resource group
+            - **Dual Purpose**: Shows relationship between spending and actual usage
+            - **Calculations**:
+              - Cost: `df.groupby('ResourceGroup')['Cost'].sum()`
+              - Usage: `df.groupby('ResourceGroup')['Quantity'].sum()`
+            
+            **🔍 What These Charts Tell You:**
+            - **Resource Group Chart**: Which departments/projects are spending the most
+            - **Top Machines Chart**: Which individual resources are your biggest cost drivers
+            - **Cost vs Usage Chart**: Whether high costs correlate with high usage (efficiency check)
+            
+            **💡 Optimization Insights:**
+            - Look for resource groups with high costs but low usage
+            - Identify top machines that might be over-provisioned
+            - Find resource groups where cost doesn't match usage patterns
+            
+            **📈 Data Processing Notes:**
+            - Charts only include resources with valid ResourceGroup and ResourceName values
+            - Costs are aggregated from all service categories for each resource
+            - Usage is measured in the original quantity units (typically hours)
+            """)
+        
 
     def display_uncategorized_analysis(self, data: AzureInvoiceData):
         """Display detailed analysis of uncategorized items."""
