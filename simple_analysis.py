@@ -6,7 +6,19 @@ from plotly.subplots import make_subplots
 
 
 class SimpleInvoiceData:
-    """Simple Azure invoice data operations for basic service usage analysis."""
+    """
+    Simple Azure invoice data operations for basic service usage analysis.
+    
+    This class provides consistent calculation methods for all simple template analysis.
+    All charts and tables use the same underlying calculation formulas to ensure 
+    consistent results across different sections.
+    
+    Calculation Standards:
+    - Cost calculations: df.groupby(column)['Cost'].sum().sort_values(ascending=False)
+    - Usage calculations: df.groupby(column)['Quantity'].sum().sort_values(ascending=False)
+    - Efficiency calculations: Total_Cost / Total_Quantity per group
+    - All methods handle missing data and return empty Series/DataFrames gracefully
+    """
     
     def __init__(self, dataframe: pd.DataFrame):
         self.df = dataframe
@@ -63,6 +75,18 @@ class SimpleInvoiceData:
         if self.df is None or 'ServiceResource' not in self.df.columns:
             return pd.Series(dtype=float)
         return self.df.groupby('ServiceResource')['Quantity'].sum().sort_values(ascending=False)
+    
+    def get_usage_by_service_type(self) -> pd.Series:
+        """Calculate total usage grouped by ServiceType."""
+        if self.df is None or 'ServiceType' not in self.df.columns:
+            return pd.Series(dtype=float)
+        return self.df.groupby('ServiceType')['Quantity'].sum().sort_values(ascending=False)
+    
+    def get_usage_by_region(self) -> pd.Series:
+        """Calculate total usage grouped by ServiceRegion."""
+        if self.df is None or 'ServiceRegion' not in self.df.columns:
+            return pd.Series(dtype=float)
+        return self.df.groupby('ServiceRegion')['Quantity'].sum().sort_values(ascending=False)
     
     def get_service_efficiency_metrics(self) -> pd.DataFrame:
         """Calculate efficiency metrics (cost per unit) by service."""
@@ -148,7 +172,17 @@ class SimpleInvoiceData:
 
 
 class SimpleChartCreator:
-    """Simple chart creator for basic service usage analysis."""
+    """
+    Simple chart creator for basic service usage analysis.
+    
+    This class ensures all charts use consistent data sources and calculation methods.
+    
+    Consistency Standards:
+    - All charts receive pre-calculated data from SimpleInvoiceData methods
+    - No direct DataFrame aggregation in chart methods
+    - Same category calculations produce identical results across all chart sections
+    - All methods use the standardized calculation formulas defined in SimpleInvoiceData
+    """
     
     def __init__(self):
         pass
@@ -159,11 +193,16 @@ class SimpleChartCreator:
             return label.ljust(max_length)
         return label[:max_length - 3] + "..."
     
-    def create_cost_by_service_chart(self, cost_data: pd.Series, top_items: int=10) -> go.Figure:
+    def create_cost_by_service_chart(self, cost_data: pd.Series, top_items: int=None) -> go.Figure:
         """Create bar chart for cost by service."""
         if cost_data.empty:
             return go.Figure()
         
+        # Use configuration value if not specified
+        if top_items is None:
+            from streamlit_app import Config
+            top_items = Config.TOP_ITEMS_COUNT
+            
         top_services = cost_data.head(top_items)
         formatted_labels = [self.format_label(str(label)) for label in top_services.index]
         
@@ -225,11 +264,16 @@ class SimpleChartCreator:
         
         return fig
     
-    def create_cost_by_resource_chart(self, cost_data: pd.Series, top_items: int=10) -> go.Figure:
+    def create_cost_by_resource_chart(self, cost_data: pd.Series, top_items: int=None) -> go.Figure:
         """Create horizontal bar chart for cost by resource."""
         if cost_data.empty:
             return go.Figure()
         
+        # Use configuration value if not specified
+        if top_items is None:
+            from streamlit_app import Config
+            top_items = Config.TOP_ITEMS_COUNT
+            
         top_resources = cost_data.head(top_items)
         
         fig = go.Figure(data=[go.Bar(
@@ -260,16 +304,24 @@ class SimpleChartCreator:
         
         return fig
     
-    def create_usage_vs_cost_chart(self, df: pd.DataFrame) -> go.Figure:
-        """Create scatter plot showing usage vs cost by service."""
-        if df is None or df.empty:
+    def create_usage_vs_cost_chart(self, cost_by_service: pd.Series, usage_by_service: pd.Series) -> go.Figure:
+        """Create scatter plot showing usage vs cost by service using consistent calculation methods."""
+        if cost_by_service.empty or usage_by_service.empty:
             return go.Figure()
         
-        # Aggregate by service
-        service_summary = df.groupby('ServiceName').agg({
-            'Cost': 'sum',
-            'Quantity': 'sum'
-        }).reset_index()
+        # Use the same data sources as other service charts for consistency
+        # Align usage data to match cost data ordering
+        aligned_usage = usage_by_service.reindex(cost_by_service.index).fillna(0)
+        
+        # Create DataFrame for plotting
+        service_summary = pd.DataFrame({
+            'ServiceName': cost_by_service.index,
+            'Cost': cost_by_service.values,
+            'Quantity': aligned_usage.values
+        })
+        
+        # Remove services with zero values to avoid clutter
+        service_summary = service_summary[(service_summary['Cost'] > 0) & (service_summary['Quantity'] > 0)]
         
         if service_summary.empty:
             return go.Figure()
@@ -308,7 +360,7 @@ class SimpleChartCreator:
         return fig
     
     def create_service_efficiency_chart(self, efficiency_data: pd.DataFrame) -> go.Figure:
-        """Create efficiency chart for services."""
+        """Create efficiency chart for services using consistent efficiency calculation."""
         if efficiency_data.empty:
             return go.Figure()
         
@@ -320,7 +372,7 @@ class SimpleChartCreator:
             specs=[[{"secondary_y": False}, {"secondary_y": False}]]
         )
         
-        # Cost bar chart
+        # Cost bar chart - uses same data as cost_by_service calculations
         fig.add_trace(
             go.Bar(
                 x=top_services['ServiceName'],
@@ -334,7 +386,7 @@ class SimpleChartCreator:
             row=1, col=1
         )
         
-        # Efficiency line chart
+        # Efficiency line chart - uses same calculation as efficiency metrics
         fig.add_trace(
             go.Scatter(
                 x=top_services['ServiceName'],

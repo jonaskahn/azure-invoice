@@ -691,231 +691,9 @@ class AzureInvoiceData:
         return sorted(resource_groups)
 
 # ===================================================================
-# SIMPLE CHART CREATOR (NEW LOGIC - ISOLATED)
+# SIMPLE CHART CREATOR (NEW LOGIC - ISOLATED) 
+# Note: SimpleChartCreator class is now imported from simple_analysis.py
 # ===================================================================
-
-
-class SimpleChartCreator:
-    """Simple chart creator for basic service usage analysis."""
-    
-    def __init__(self):
-        self.theme = Config.CHART_THEME
-    
-    def format_label(self, label: str, max_length: int=Config.MAX_LABEL_LENGTH) -> str:
-        """Format label to specified length."""
-        if len(label) <= max_length:
-            return label.ljust(max_length)
-        return label[:max_length - 3] + "..."
-    
-    def create_cost_by_service_chart(self, cost_data: pd.Series) -> go.Figure:
-        """Create bar chart for cost by service."""
-        if cost_data.empty:
-            return go.Figure()
-        
-        top_services = cost_data.head(Config.TOP_ITEMS_COUNT)
-        formatted_labels = [self.format_label(str(label)) for label in top_services.index]
-        
-        fig = go.Figure(data=[
-            go.Bar(
-                x=formatted_labels,
-                y=top_services.values,
-                text=[f'${value:,.2f}' for value in top_services.values],
-                textposition='outside',
-                marker_color='lightblue',
-                hovertemplate='<b>%{x}</b><br>Cost: $%{y:,.2f}<extra></extra>'
-            )
-        ])
-        
-        fig.update_layout(
-            title={
-                'text': '🔧 Total Cost by Service',
-                'x': 0.5,
-                'xanchor': 'center',
-                'font': {'size': 18}
-            },
-            xaxis_title='Service Name',
-            yaxis_title='Cost (USD)',
-            height=Config.CHART_HEIGHT,
-            showlegend=False,
-            xaxis={'tickangle': Config.ROTATION_ANGLE},
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
-        
-        return fig
-    
-    def create_cost_by_region_chart(self, cost_data: pd.Series) -> go.Figure:
-        """Create pie chart for cost by region."""
-        if cost_data.empty:
-            return go.Figure()
-        
-        fig = go.Figure(data=[go.Pie(
-            labels=cost_data.index,
-            values=cost_data.values,
-            hole=0.4,
-            textinfo='label+percent+value',
-            texttemplate='<b>%{label}</b><br>%{percent}<br>$%{value:,.2f}',
-            hovertemplate='<b>%{label}</b><br>Cost: $%{value:,.2f}<br>Percentage: %{percent}<extra></extra>'
-        )])
-        
-        fig.update_layout(
-            title={
-                'text': '🌍 Cost Distribution by Region',
-                'x': 0.5,
-                'xanchor': 'center',
-                'font': {'size': 18}
-            },
-            height=Config.CHART_HEIGHT,
-            showlegend=True,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
-        
-        return fig
-    
-    def create_cost_by_resource_chart(self, cost_data: pd.Series) -> go.Figure:
-        """Create horizontal bar chart for cost by resource."""
-        if cost_data.empty:
-            return go.Figure()
-        
-        top_resources = cost_data.head(Config.TOP_ITEMS_COUNT)
-        
-        fig = go.Figure(data=[go.Bar(
-            y=top_resources.index,
-            x=top_resources.values,
-            orientation='h',
-            text=[f'${value:,.2f}' for value in top_resources.values],
-            textposition='outside',
-            marker_color='lightcoral',
-            hovertemplate='<b>%{y}</b><br>Cost: $%{x:,.2f}<extra></extra>'
-        )])
-        
-        fig.update_layout(
-            title={
-                'text': '💻 Top Resources by Cost',
-                'x': 0.5,
-                'xanchor': 'center',
-                'font': {'size': 18}
-            },
-            xaxis_title='Cost (USD)',
-            yaxis_title='Service Resource',
-            height=max(400, len(top_resources) * 40),
-            showlegend=False,
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            margin=dict(l=150, r=50, t=80, b=50)
-        )
-        
-        return fig
-    
-    def create_usage_vs_cost_chart(self, df: pd.DataFrame) -> go.Figure:
-        """Create scatter plot showing usage vs cost by service."""
-        if df is None or df.empty:
-            return go.Figure()
-        
-        # Aggregate by service
-        service_summary = df.groupby('ServiceName').agg({
-            'Cost': 'sum',
-            'Quantity': 'sum'
-        }).reset_index()
-        
-        if service_summary.empty:
-            return go.Figure()
-        
-        fig = go.Figure(data=go.Scatter(
-            x=service_summary['Quantity'],
-            y=service_summary['Cost'],
-            mode='markers+text',
-            text=service_summary['ServiceName'],
-            textposition='top center',
-            marker=dict(
-                size=12,
-                color=service_summary['Cost'],
-                colorscale='Viridis',
-                showscale=True,
-                colorbar=dict(title="Cost (USD)")
-            ),
-            hovertemplate='<b>%{text}</b><br>Usage: %{x:,.0f}<br>Cost: $%{y:,.2f}<extra></extra>'
-        ))
-        
-        fig.update_layout(
-            title={
-                'text': '📊 Service Usage vs Cost Analysis',
-                'x': 0.5,
-                'xanchor': 'center',
-                'font': {'size': 18}
-            },
-            xaxis_title='Total Usage (Quantity)',
-            yaxis_title='Total Cost (USD)',
-            height=Config.CHART_HEIGHT,
-            showlegend=False,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
-        
-        return fig
-    
-    def create_service_efficiency_chart(self, efficiency_data: pd.DataFrame) -> go.Figure:
-        """Create efficiency chart for services."""
-        if efficiency_data.empty:
-            return go.Figure()
-        
-        top_services = efficiency_data.head(15)
-        
-        fig = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=("Total Cost by Service", "Cost per Unit"),
-            specs=[[{"secondary_y": False}, {"secondary_y": False}]]
-        )
-        
-        # Cost bar chart
-        fig.add_trace(
-            go.Bar(
-                x=top_services['ServiceName'],
-                y=top_services['Cost'],
-                name='Total Cost',
-                marker_color='lightblue',
-                text=[f'${cost:,.0f}' for cost in top_services['Cost']],
-                textposition='outside',
-                showlegend=False
-            ),
-            row=1, col=1
-        )
-        
-        # Efficiency line chart
-        fig.add_trace(
-            go.Scatter(
-                x=top_services['ServiceName'],
-                y=top_services['EfficiencyScore'],
-                mode='lines+markers+text',
-                name='Cost per Unit',
-                line=dict(color='red', width=3),
-                marker=dict(size=8, color='red'),
-                text=[f'${score:.3f}' for score in top_services['EfficiencyScore']],
-                textposition='top center',
-                showlegend=False
-            ),
-            row=1, col=2
-        )
-        
-        fig.update_xaxes(title_text="Service", tickangle=45, row=1, col=1)
-        fig.update_xaxes(title_text="Service", tickangle=45, row=1, col=2)
-        fig.update_yaxes(title_text="Cost (USD)", row=1, col=1)
-        fig.update_yaxes(title_text="Cost per Unit (USD)", row=1, col=2)
-        
-        fig.update_layout(
-            title={
-                'text': '⚡ Service Efficiency Analysis',
-                'x': 0.5,
-                'xanchor': 'center',
-                'font': {'size': 18}
-            },
-            height=600,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
-        
-        return fig
 
 # ===================================================================
 # COMPLEX CHART CREATOR (OLD LOGIC - ISOLATED)
@@ -2955,8 +2733,10 @@ class StreamlitDashboard:
         """Display simple efficiency analysis."""
         st.header("⚡ Efficiency Analysis")
         
-        # Usage vs Cost scatter plot
-        fig1 = self.simple_chart_creator.create_usage_vs_cost_chart(data.df)
+        # Usage vs Cost scatter plot - using consistent calculation methods
+        cost_by_service = data.get_cost_by_service()
+        usage_by_service = data.get_usage_by_service()
+        fig1 = self.simple_chart_creator.create_usage_vs_cost_chart(cost_by_service, usage_by_service)
         st.plotly_chart(fig1, use_container_width=True)
         
         # Service efficiency metrics
@@ -3007,11 +2787,16 @@ class StreamlitDashboard:
         
         with tab2:
             cost_by_region = data.get_cost_by_region()
+            usage_by_region = data.get_usage_by_region()
+            
             if not cost_by_region.empty:
                 region_df = pd.DataFrame({
                     'Region': cost_by_region.index,
                     'Total Cost ($)': cost_by_region.values.round(2)
                 })
+                if not usage_by_region.empty:
+                    region_df['Total Usage'] = usage_by_region.reindex(cost_by_region.index).values.round(2)
+                
                 st.dataframe(region_df, use_container_width=True, hide_index=True)
             else:
                 st.info("No region data available.")
@@ -3291,6 +3076,42 @@ class StreamlitDashboard:
                     self.display_simple_detailed_tables(data)
 
                     st.success("✅ Simple analysis complete! Service costs, regional distribution, and efficiency metrics calculated.")
+                    
+                    # Calculation consistency documentation
+                    with st.expander("📊 **Calculation Consistency Guarantee**", expanded=False):
+                        st.markdown("""
+                        **🎯 Consistent Calculations Across All Sections:**
+                        
+                        This simple template ensures that **all calculations use identical formulas** across every chart and table section:
+                        
+                        **📈 Standard Calculation Methods:**
+                        - **Cost by Service**: `df.groupby('ServiceName')['Cost'].sum().sort_values(ascending=False)`
+                        - **Cost by Region**: `df.groupby('ServiceRegion')['Cost'].sum().sort_values(ascending=False)`
+                        - **Cost by Resource**: `df.groupby('ServiceResource')['Cost'].sum().sort_values(ascending=False)`
+                        - **Usage by Service**: `df.groupby('ServiceName')['Quantity'].sum().sort_values(ascending=False)`
+                        - **Usage by Region**: `df.groupby('ServiceRegion')['Quantity'].sum().sort_values(ascending=False)`
+                        - **Usage by Resource**: `df.groupby('ServiceResource')['Quantity'].sum().sort_values(ascending=False)`
+                        - **Efficiency Score**: `Total_Cost ÷ Total_Quantity` per category
+                        
+                        **🔍 Consistency Features:**
+                        - ✅ **Same Service** appears with **identical cost values** in all charts and tables
+                        - ✅ **Same Region** shows **identical cost totals** across all sections
+                        - ✅ **Same Resource** displays **consistent values** everywhere
+                        - ✅ **Efficiency calculations** use the exact same cost and usage data
+                        - ✅ **No discrepancies** between chart data and table data
+                        
+                        **📊 How We Ensure Consistency:**
+                        1. **Centralized Calculation Methods**: All data comes from standardized methods in `SimpleInvoiceData`
+                        2. **No Duplicate Aggregations**: Charts receive pre-calculated data, never aggregate directly
+                        3. **Unified Data Sources**: All sections use the same calculation functions
+                        4. **Consistent Sorting**: All results sorted by cost/usage descending for predictable ordering
+                        
+                        **🎯 Benefits:**
+                        - **Reliable Analysis**: Same category always shows same results
+                        - **Trustworthy Data**: No calculation inconsistencies to confuse analysis
+                        - **Clear Comparisons**: Easy to cross-reference values between different views
+                        - **Audit Trail**: Single source of truth for all calculations
+                        """)
 
         else:
             st.info("📁 Please select a template and upload your Azure Invoice CSV file to begin analysis!")
