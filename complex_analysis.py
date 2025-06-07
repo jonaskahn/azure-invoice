@@ -1,6 +1,9 @@
 from typing import Optional, Dict, Any
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime, timedelta
 import streamlit as st
 from plotly.subplots import make_subplots
 
@@ -1498,3 +1501,1003 @@ class StreamlitChartCreator:
         )
 
         return fig 
+
+
+class ComplexDashboard:
+    """Complex Azure invoice dashboard with advanced analysis features."""
+    
+    def __init__(self):
+        self.chart_creator = StreamlitChartCreator()
+        # Configuration Constants - Fixed values for consistent display
+        self.MAX_LABEL_LENGTH = 40
+        self.TOP_ITEMS_COUNT = 15  # Show top 15 items in charts
+        self.CHART_HEIGHT = 500
+        self.CATEGORY_COLORS = {
+            'Managed Disks': '#FF6B6B',
+            'CDN': '#4ECDC4',
+            'Network/IP': '#45B7D1',
+            'Backup': '#96CEB4',
+            'Load Balancer': '#FECA57',
+            'VM Compute': '#FF9FF3',
+            'Other Storage': '#54A0FF',
+            'Bandwidth': '#5F27CD',
+            'Key Vault': '#00D2D3',
+            'Other': '#C7ECEE'
+        }
+
+    def display_enhanced_summary(self, data: AzureInvoiceData):
+        """Display enhanced data summary with validation."""
+        summary = data.get_data_summary()
+
+        if not summary:
+            return
+
+        st.header("📈 Executive Summary & Validation")
+
+        # Add data integrity check section
+        if summary.get('duplicate_records', 0) > 0 or summary.get('negative_costs', 0) > 0 or summary.get('rows_with_nan_rg', 0) > 0:
+            with st.expander("⚠️ **Data Integrity Warnings**", expanded=True):
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    duplicates = summary.get('duplicate_records', 0)
+                    if duplicates > 0:
+                        st.error(f"**Duplicate Rows:** {duplicates}")
+                        st.caption("May cause inflated costs")
+                    else:
+                        st.success("**No Duplicates** ✓")
+                
+                with col2:
+                    negative = summary.get('negative_costs', 0)
+                    if negative > 0:
+                        st.warning(f"**Negative Costs:** {negative}")
+                        st.caption("Check for credits/refunds")
+                    else:
+                        st.success("**No Negative Costs** ✓")
+                
+                with col3:
+                    nan_rg = summary.get('rows_with_nan_rg', 0)
+                    if nan_rg > 0:
+                        st.info(f"**Missing Resource Groups:** {nan_rg}")
+                        st.caption("Not included in RG analysis")
+                    else:
+                        st.success("**All RGs Present** ✓")
+                
+                with col4:
+                    max_cost = summary.get('max_single_cost', 0)
+                    total_cost = summary.get('total_cost', 1)
+                    if max_cost > total_cost * 0.3:
+                        st.warning(f"**Max Single Cost:** ${max_cost:,.2f}")
+                        st.caption(f"{(max_cost/total_cost*100):.1f}% of total")
+                    else:
+                        st.success("**Normal Cost Distribution** ✓")
+
+        # Detailed validation status
+        if 'cost_validation' in summary:
+            validation = summary['cost_validation']
+
+            # Cost reconciliation overview
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                if validation['reconciliation_success']:
+                    st.success(f"✅ **Cost Reconciliation:** ${validation['original_total']:,.2f} fully reconciled")
+                else:
+                    st.error(f"❌ **Cost Reconciliation:** Difference of ${validation['difference']:,.2f} found")
+
+            with col2:
+                coverage = validation['categorization_coverage']
+                if coverage >= 95:
+                    st.success(f"📊 **Coverage:** {coverage:.1f}%")
+                elif coverage >= 80:
+                    st.warning(f"📊 **Coverage:** {coverage:.1f}%")
+                else:
+                    st.error(f"📊 **Coverage:** {coverage:.1f}%")
+
+            # Detailed reconciliation breakdown
+            with st.expander("🔍 **Detailed Cost Reconciliation Breakdown**", expanded=False):
+                st.markdown("### 💰 Cost Reconciliation Details")
+
+                # Create reconciliation table
+                reconciliation_data = {
+                    'Metric': [
+                        'Original Invoice Total',
+                        'Sum of Categorized Costs',
+                        'Difference (Original - Categorized)',
+                        'Categorized Costs',
+                        'Uncategorized Costs ("Other")',
+                        'Reconciliation Status'
+                    ],
+                    'Amount ($)': [
+                        f"${validation['original_total']:,.2f}",
+                        f"${validation['categorized_total']:,.2f}",
+                        f"${validation['difference']:,.2f}",
+                        f"${validation['categorized_cost']:,.2f}",
+                        f"${validation['uncategorized_cost']:,.2f}",
+                        "✅ Success" if validation['reconciliation_success'] else "❌ Failed"
+                    ],
+                    'Percentage (%)': [
+                        "100.0%",
+                        f"{(validation['categorized_total'] / validation['original_total'] * 100):.2f}%" if validation[
+                                                                                                                'original_total'] > 0 else "0%",
+                        f"{(validation['difference'] / validation['original_total'] * 100):.2f}%" if validation[
+                                                                                                         'original_total'] > 0 else "0%",
+                        f"{validation['categorization_coverage']:.2f}%",
+                        f"{(validation['uncategorized_cost'] / validation['original_total'] * 100):.2f}%" if validation[
+                                                                                                                 'original_total'] > 0 else "0%",
+                        f"{validation['categorization_coverage']:.1f}% Categorized"
+                    ]
+                }
+
+                reconciliation_df = pd.DataFrame(reconciliation_data)
+                st.dataframe(reconciliation_df, hide_index=True, use_container_width=True)
+
+                # Category-by-category breakdown
+                st.markdown("### 📊 Category-by-Category Breakdown")
+                category_breakdown = validation['category_breakdown']
+
+                breakdown_data = []
+                for category, amount in sorted(category_breakdown.items(), key=lambda x: x[1], reverse=True):
+                    percentage = (amount / validation['original_total'] * 100) if validation[
+                                                                                      'original_total'] > 0 else 0
+                    breakdown_data.append({
+                        'Cost Category': category,
+                        'Amount ($)': f"${amount:,.2f}",
+                        'Percentage (%)': f"{percentage:.2f}%",
+                        'Status': "🎯 Categorized" if category != 'Other' else "⚠️ Uncategorized"
+                    })
+
+                breakdown_df = pd.DataFrame(breakdown_data)
+                st.dataframe(breakdown_df, hide_index=True, use_container_width=True)
+
+                # Reconciliation insights
+                st.markdown("### 💡 Reconciliation Insights")
+
+                if validation['reconciliation_success']:
+                    st.info("✅ **Perfect Reconciliation**: All invoice costs have been accounted for in the analysis.")
+                else:
+                    st.warning(
+                        f"⚠️ **Reconciliation Gap**: ${validation['difference']:,.2f} difference detected. This may indicate:")
+                    st.markdown("""
+                    - Data processing errors
+                    - Missing or corrupted records
+                    - Unexpected data formats
+                    - New Azure service types not yet categorized
+                    """)
+
+                if validation['uncategorized_cost'] > 0:
+                    uncategorized_pct = (validation['uncategorized_cost'] / validation['original_total'] * 100)
+                    if uncategorized_pct > 5:
+                        st.warning(
+                            f"🔍 **High Uncategorized Costs**: {uncategorized_pct:.1f}% (${validation['uncategorized_cost']:,.2f}) of costs are in 'Other' category.")
+                        st.markdown("**Recommended Actions:**")
+                        st.markdown("""
+                        - Review 'Other' category items in detailed tables
+                        - Check for new Azure service types
+                        - Verify MeterCategory and MeterSubcategory values
+                        - Update category classification rules if needed
+                        """)
+                    else:
+                        st.success(
+                            f"✅ **Low Uncategorized Costs**: Only {uncategorized_pct:.1f}% in 'Other' category - excellent categorization coverage!")
+
+                # Mathematical verification
+                st.markdown("### 🧮 Mathematical Verification")
+                calculated_total = sum(category_breakdown.values())
+                verification_success = abs(calculated_total - validation['original_total']) < 0.01
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Original Total", f"${validation['original_total']:,.2f}")
+                with col2:
+                    st.metric("Calculated Total", f"${calculated_total:,.2f}")
+                with col3:
+                    difference = abs(calculated_total - validation['original_total'])
+                    st.metric("Difference", f"${difference:,.2f}",
+                              delta="✅ Verified" if verification_success else "❌ Error")
+
+        # Main metrics
+        col1, col2, col3, col4, col5 = st.columns(5)
+
+        with col1:
+            st.metric(
+                "Total Cost",
+                f"${summary['total_cost']:,.2f}",
+                help="Total cost across all resources"
+            )
+
+        with col2:
+            st.metric(
+                "Total Usage",
+                f"{summary['total_quantity']:,.0f} hrs",
+                help="Total usage hours across all resources"
+            )
+
+        with col3:
+            st.metric(
+                "Top Category",
+                summary.get('top_cost_category', 'Unknown'),
+                f"${summary.get('top_category_cost', 0):,.2f}",
+                help="Highest cost category"
+            )
+
+        with col4:
+            st.metric(
+                "Resource Groups",
+                summary['unique_resource_groups'],
+                help="Number of unique resource groups"
+            )
+
+        with col5:
+            st.metric(
+                "Services",
+                summary.get('unique_services', 0),
+                help="Number of unique Azure services"
+            )
+
+    def display_cost_category_analysis(self, data: AzureInvoiceData):
+        """Display cost category analysis."""
+        st.header("💰 Cost Category Analysis")
+
+        if not data.cost_analyzer:
+            st.error("Cost analyzer not available - missing required columns")
+            return
+
+        category_summary = data.cost_analyzer.get_category_summary()
+
+        if category_summary.empty:
+            st.warning("No cost category data available for analysis.")
+            return
+
+        # Display category summary table
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            # Pie chart
+            fig_pie = self.chart_creator.create_cost_category_pie_chart(category_summary)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        with col2:
+            # Category summary table
+            st.markdown("**📋 Category Summary**")
+            display_df = category_summary[['CostCategory', 'Total_Cost', 'Cost_Percentage']].copy()
+            display_df.columns = ['Category', 'Cost ($)', 'Percentage (%)']
+            display_df['Cost ($)'] = display_df['Cost ($)'].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(display_df, hide_index=True, use_container_width=True)
+
+        # Horizontal bar chart for detailed view
+        fig_bar = self.chart_creator.create_cost_category_bar_chart(category_summary)
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+        # Cost insights
+        top_category = category_summary.iloc[0]
+        st.info(
+            f"💡 **Key Insight:** {top_category['CostCategory']} represents {top_category['Cost_Percentage']:.1f}% of total costs (${top_category['Total_Cost']:,.2f})")
+
+    def display_service_provider_analysis(self, data: AzureInvoiceData):
+        """Display service provider analysis."""
+        st.header("🏢 Service Provider Analysis")
+
+        if not data.cost_analyzer:
+            return
+
+        provider_summary = data.cost_analyzer.get_service_provider_analysis()
+
+        if provider_summary.empty:
+            st.warning("No service provider data available.")
+            return
+
+        # Service provider chart
+        fig = self.chart_creator.create_service_provider_chart(provider_summary)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Provider summary table
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            st.markdown("**📊 Service Provider Breakdown**")
+            display_df = provider_summary.head(10)[
+                ['ConsumedService', 'Total_Cost', 'Cost_Percentage', 'Record_Count']].copy()
+            display_df.columns = ['Service Provider', 'Cost ($)', 'Percentage (%)', 'Records']
+            display_df['Cost ($)'] = display_df['Cost ($)'].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(display_df, hide_index=True, use_container_width=True)
+
+        with col2:
+            # Top provider insights
+            top_provider = provider_summary.iloc[0]
+            st.info(f"**Top Provider:** {top_provider['ConsumedService']}")
+            st.metric("Cost", f"${top_provider['Total_Cost']:,.2f}")
+            st.metric("Share", f"{top_provider['Cost_Percentage']:.1f}%")
+
+    def display_efficiency_analysis(self, data: AzureInvoiceData):
+        """Display comprehensive efficiency analysis with enhanced insights."""
+        st.header("⚡ Resource Efficiency Analysis")
+
+        with st.spinner('⚡ Calculating resource efficiency metrics...'):
+            efficiency_data = data.get_efficiency_metrics(include_related=True)
+
+        if efficiency_data.empty:
+            st.warning("No efficiency data available (requires quantity > 0).")
+            st.info(
+                "💡 Efficiency analysis requires resources with usage data (Quantity > 0). Check if your data includes usage metrics.")
+            return
+
+        # Summary metrics at the top
+        col1, col2, col3, col4 = st.columns(4)
+
+        total_cost = efficiency_data['Cost'].sum()
+        total_hours = efficiency_data['Quantity'].sum()
+        avg_efficiency = efficiency_data['EfficiencyScore'].mean()
+        efficiency_median = efficiency_data['EfficiencyScore'].median()
+
+        with col1:
+            st.metric("Total Cost", f"${total_cost:,.2f}")
+        with col2:
+            st.metric("Total Usage", f"{total_hours:,.0f} hours")
+        with col3:
+            st.metric("Avg Cost/Hour", f"${avg_efficiency:.4f}")
+        with col4:
+            st.metric("Median Cost/Hour", f"${efficiency_median:.4f}")
+
+        # Enhanced efficiency chart
+        fig = self.chart_creator.create_efficiency_metrics_chart(efficiency_data)
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Detailed insights and recommendations
+        st.markdown("### 📊 Efficiency Insights & Recommendations")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("#### 🎯 Cost Optimization Targets")
+
+            # High cost per unit resources
+            high_cost_threshold = avg_efficiency * 1.5
+            high_cost_resources = efficiency_data[efficiency_data['EfficiencyScore'] > high_cost_threshold]
+
+            if not high_cost_resources.empty:
+                st.warning(
+                    f"⚠️ **{len(high_cost_resources)} resources** have high cost per hour (>${high_cost_threshold:.4f}+)")
+
+                display_high_cost = high_cost_resources.head(5)[['Cost', 'Quantity', 'EfficiencyScore']].copy()
+                display_high_cost['Cost'] = display_high_cost['Cost'].apply(lambda x: f"${x:,.2f}")
+                display_high_cost['Quantity'] = display_high_cost['Quantity'].apply(lambda x: f"{x:,.0f}")
+                display_high_cost['EfficiencyScore'] = display_high_cost['EfficiencyScore'].apply(lambda x: f"${x:.4f}")
+                display_high_cost.columns = ['Total Cost', 'Hours', 'Cost/Hour']
+
+                st.dataframe(display_high_cost, use_container_width=True)
+
+                # Calculate potential savings
+                potential_savings = high_cost_resources['Cost'].sum() * 0.2  # Assume 20% savings potential
+                st.info(f"💰 **Optimization Potential**: ~${potential_savings:,.2f} (20% reduction target)")
+            else:
+                st.success("✅ All resources have reasonable cost efficiency!")
+
+        with col2:
+            st.markdown("#### 💡 Efficiency Categories")
+
+            # Categorize resources
+            efficient_resources = efficiency_data[efficiency_data['EfficiencyScore'] <= efficiency_median]
+            above_avg_resources = efficiency_data[
+                (efficiency_data['EfficiencyScore'] > efficiency_median) & 
+                (efficiency_data['EfficiencyScore'] <= avg_efficiency * 1.5)
+                ]
+            high_cost_resources = efficiency_data[efficiency_data['EfficiencyScore'] > avg_efficiency * 1.5]
+
+            # Display categories with metrics
+            st.metric(
+                "🟢 Efficient Resources",
+                f"{len(efficient_resources)}",
+                delta=f"${efficient_resources['Cost'].sum():,.0f} total cost"
+            )
+
+            st.metric(
+                "🟡 Above Average",
+                f"{len(above_avg_resources)}",
+                delta=f"${above_avg_resources['Cost'].sum():,.0f} total cost"
+            )
+
+            st.metric(
+                "🔴 High Cost/Hour",
+                f"{len(high_cost_resources)}",
+                delta=f"${high_cost_resources['Cost'].sum():,.0f} total cost"
+            )
+
+        # Resource Group and Machine Analysis
+        st.markdown("### 🏗️ Resource Group & Machine Breakdown")
+
+        # Get detailed breakdown with resource groups - show loading indicator
+        with st.spinner('🔄 Calculating resource group and machine breakdown...'):
+            resource_breakdown = data.get_efficiency_resource_breakdown(include_related=True)
+
+        if not resource_breakdown.empty:
+            # Resource Group Summary - First Row
+            st.markdown("#### 📊 Cost by Resource Group")
+
+            with st.spinner('📊 Processing resource group summaries...'):
+                rg_summary = resource_breakdown.groupby('ResourceGroup').agg({
+                    'Cost': 'sum',
+                    'Quantity': 'sum',
+                    'ResourceName': 'count'
+                }).round(2)
+                rg_summary['AvgEfficiency'] = rg_summary['Cost'] / rg_summary['Quantity']
+                rg_summary = rg_summary.sort_values('Cost', ascending=False)
+
+            # Format for display
+            rg_display = rg_summary.copy()
+            rg_display['Cost'] = rg_display['Cost'].apply(lambda x: f"${x:,.2f}")
+            rg_display['Quantity'] = rg_display['Quantity'].apply(lambda x: f"{x:,.0f}")
+            rg_display['AvgEfficiency'] = rg_display['AvgEfficiency'].apply(lambda x: f"${x:.4f}")
+            rg_display.columns = ['Total Cost', 'Total Hours', 'Resources', 'Avg Cost/Hour']
+
+            st.dataframe(rg_display, use_container_width=True)
+
+            # Add space between rows
+            st.markdown("")
+
+            # Top Cost Resources by Group - Second Row
+            st.markdown("#### 🎯 Top Cost Resources by Group")
+
+            # Show top 2 most expensive resources per top 3 resource groups
+            top_rgs = rg_summary.head(3).index.tolist()
+
+            for rg in top_rgs:
+                rg_resources = resource_breakdown[resource_breakdown['ResourceGroup'] == rg].head(2)
+
+                st.markdown(f"**{rg}:**")
+                for _, resource in rg_resources.iterrows():
+                    cost = resource['Cost']
+                    efficiency = resource['EfficiencyScore']
+                    st.write(f"• `{resource['ResourceName']}`: ${cost:,.2f} (${efficiency:.4f}/hr)")
+                st.write("")
+
+        # Detailed efficiency breakdown table
+        st.markdown("#### 📋 Complete Resource & Group Breakdown")
+
+        if not resource_breakdown.empty:
+            with st.spinner('🔄 Formatting detailed breakdown table...'):
+
+                # Add efficiency categories to the display
+                def categorize_efficiency(score):
+                    if score > avg_efficiency * 1.5:
+                        return "🔴 High Cost"
+                    elif score > efficiency_median:
+                        return "🟡 Above Average"
+                    else:
+                        return "🟢 Efficient"
+
+                display_data = resource_breakdown.copy()
+                display_data['Category'] = display_data['EfficiencyScore'].apply(categorize_efficiency)
+                display_data['Cost'] = display_data['Cost'].apply(lambda x: f"${x:,.2f}")
+                display_data['Quantity'] = display_data['Quantity'].apply(lambda x: f"{x:,.0f}")
+                display_data['CostPerUnit'] = display_data['CostPerUnit'].apply(lambda x: f"${x:.4f}")
+                display_data['EfficiencyScore'] = display_data['EfficiencyScore'].apply(lambda x: f"${x:.4f}")
+
+                # Reorder and rename columns
+                display_data = display_data[
+                    ['Category', 'ResourceGroup', 'ResourceName', 'Cost', 'Quantity', 'CostPerUnit', 'RelatedResources',
+                     'PrimaryServices']]
+                display_data.columns = ['Efficiency', 'Resource Group', 'Machine/Resource', 'Total Cost', 'Hours',
+                                        'Cost/Hour', 'Related', 'Primary Services']
+
+            st.dataframe(display_data, use_container_width=True, hide_index=True)
+
+            # Cost distribution insights
+            st.markdown("#### 💡 Resource Group Insights")
+
+            with st.spinner('💡 Calculating resource group insights...'):
+                # Calculate resource group statistics
+                total_cost_all = resource_breakdown['Cost'].sum()
+                top_rg_cost = rg_summary.iloc[0]['Cost'] if not rg_summary.empty else 0
+                top_rg_name = rg_summary.index[0] if not rg_summary.empty else 'Unknown'
+                top_rg_percentage = (top_rg_cost / total_cost_all * 100) if total_cost_all > 0 else 0
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric(
+                    "Most Expensive Group",
+                    top_rg_name,
+                    delta=f"${top_rg_cost:,.2f} ({top_rg_percentage:.1f}%)"
+                )
+
+            with col2:
+                # Find most efficient resource group
+                if not rg_summary.empty:
+                    most_efficient_rg = rg_summary.loc[rg_summary['AvgEfficiency'].idxmin()]
+                    st.metric(
+                        "Most Efficient Group",
+                        most_efficient_rg.name,
+                        delta=f"${most_efficient_rg['AvgEfficiency']:.4f}/hour avg"
+                    )
+
+            with col3:
+                # Resource group count
+                unique_rgs = resource_breakdown['ResourceGroup'].nunique()
+                st.metric(
+                    "Resource Groups",
+                    unique_rgs,
+                    delta=f"{len(resource_breakdown)} total resources"
+                )
+        else:
+            st.warning("Unable to generate resource group breakdown - ResourceGroup data may be missing.")
+
+    def run_complex_analysis(self, data: AzureInvoiceData):
+        """Run the complete complex analysis dashboard."""
+        st.info("🔧 **Complex Template Active** - Advanced Azure invoice analysis with cost categorization")
+
+        with st.container():
+            # Enhanced summary with validation
+            self.display_enhanced_summary(data)
+            st.divider()
+
+            # Cost category analysis (new primary feature)
+            self.display_cost_category_analysis(data)
+            st.divider()
+
+            # Service provider analysis (new feature)
+            self.display_service_provider_analysis(data)
+            st.divider()
+
+            # Efficiency analysis (new feature)
+            self.display_efficiency_analysis(data)
+            st.divider()
+
+            # Interactive drill-down analysis (new feature)
+            self.display_interactive_drill_down(data)
+            st.divider()
+
+            # Traditional resource analysis
+            self.display_traditional_analysis(data)
+            st.divider()
+
+            # Uncategorized items analysis (new prominent section)
+            self.display_uncategorized_analysis(data)
+            st.divider()
+
+            # Enhanced detailed tables
+            self.display_detailed_tables(data)
+
+            st.success(
+                "✅ Enhanced analysis complete! Cost categories classified, validation performed, and efficiency metrics calculated.")
+
+    # Continue with more complex methods...
+
+    def display_interactive_drill_down(self, data: AzureInvoiceData):
+        """Display interactive drill-down: Resource Group -> Machines -> Cost Categories."""
+        st.subheader("🔍 Interactive Drill-Down Analysis")
+        st.markdown(
+            "**Select a resource group to see its machines, then click on any machine to see its cost breakdown by category.**")
+
+        # Get all resource groups with error handling
+        try:
+            resource_groups = data.get_all_resource_groups()
+        except Exception as e:
+            st.error(f"Error loading resource groups: {str(e)}")
+            st.info("This might be due to missing or invalid data in the ResourceGroup column.")
+            return
+
+        if not resource_groups:
+            st.warning("No resource groups found in the data.")
+            st.info("Please ensure your CSV file has a 'ResourceGroup' column with valid data.")
+            return
+
+        # Resource Group Selection
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            selected_rg = st.selectbox(
+                "🏗️ **Select Resource Group:**",
+                resource_groups,
+                help="Choose a resource group to see its machines and costs"
+            )
+
+        with col2:
+            # Show resource group summary with error handling
+            if selected_rg:
+                try:
+                    rg_data = data.df[data.df[
+                                          'ResourceGroup'] == selected_rg] if 'ResourceGroup' in data.df.columns else pd.DataFrame()
+                    if not rg_data.empty:
+                        rg_cost = rg_data['Cost'].sum()
+                        rg_machines = rg_data[
+                            'ResourceName'].dropna().nunique() if 'ResourceName' in rg_data.columns else 0
+                        rg_quantity = rg_data['Quantity'].sum()
+
+                        col_a, col_b, col_c = st.columns(3)
+                        with col_a:
+                            st.metric("Total Cost", f"${rg_cost:,.2f}")
+                        with col_b:
+                            st.metric("Machines", f"{rg_machines}")
+                        with col_c:
+                            st.metric("Total Usage", f"{rg_quantity:,.0f} hrs")
+                except Exception as e:
+                    st.warning(f"Error calculating resource group summary: {str(e)}")
+
+        if not selected_rg:
+            st.info("👆 Please select a resource group to begin drill-down analysis.")
+            return
+
+        # Get machines for selected resource group with error handling
+        try:
+            with st.spinner(f'🔄 Loading machines for resource group: {selected_rg}...'):
+                machines_data = data.get_machines_by_resource_group(selected_rg)
+        except Exception as e:
+            st.error(f"Error loading machines for resource group '{selected_rg}': {str(e)}")
+            return
+
+        if machines_data.empty:
+            st.warning(f"No machines found in resource group: {selected_rg}")
+            return
+
+        # Display machines table with selection capability
+        st.markdown(f"### 🖥️ Machines in Resource Group: **{selected_rg}**")
+
+        # Format machines data for display
+        try:
+            display_machines = machines_data.copy()
+            display_machines['Cost'] = display_machines['Cost'].apply(lambda x: f"${x:,.2f}")
+            display_machines['Quantity'] = display_machines['Quantity'].apply(lambda x: f"{x:,.2f}")
+            display_machines['Cost_Percentage'] = display_machines['Cost_Percentage'].apply(lambda x: f"{x:.1f}%")
+
+            display_machines.columns = ['Machine Name', 'Total Cost', 'Total Usage', 'Services Used',
+                                        'Meter Categories', 'Cost %']
+
+            # Create clickable machine selection
+            st.markdown("**Click on a machine name below to see its detailed cost breakdown:**")
+
+            # Display machines table
+            st.dataframe(display_machines, use_container_width=True, hide_index=True)
+
+            # Machine selection using radio buttons for better UX
+            machine_options = machines_data['ResourceName'].tolist()
+
+            # Create a more compact selection method
+            selected_machine = st.selectbox(
+                "🖥️ **Select Machine for Detailed Analysis:**",
+                [""] + machine_options,
+                format_func=lambda
+                    x: "Choose a machine..." if x == "" else f"{x} (${machines_data[machines_data['ResourceName'] == x]['Cost'].iloc[0]:,.2f})" if x else x,
+                help="Select a machine to see its cost breakdown by category"
+            )
+
+        except Exception as e:
+            st.error(f"Error formatting machine data: {str(e)}")
+            return
+
+        # Machine cost breakdown analysis
+        if selected_machine and selected_machine != "":
+            st.markdown("---")
+
+            # Get machine cost breakdown by category
+            with st.spinner(f'🔍 Analyzing cost breakdown for: {selected_machine}...'):
+                machine_breakdown = data.get_machine_cost_breakdown(selected_machine)
+
+            if machine_breakdown.empty:
+                st.warning(f"No cost breakdown available for machine: {selected_machine}")
+                return
+
+            # Display machine details header
+            machine_cost = machine_breakdown['Cost'].sum()
+            machine_quantity = machine_breakdown['Quantity'].sum()
+
+            st.markdown(f"### 🎯 Detailed Analysis: **{selected_machine}**")
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Cost", f"${machine_cost:,.2f}")
+            with col2:
+                st.metric("Total Usage", f"{machine_quantity:,.2f} hrs")
+            with col3:
+                st.metric("Categories", len(machine_breakdown))
+            with col4:
+                avg_cost_per_hour = machine_cost / machine_quantity if machine_quantity > 0 else 0
+                st.metric("Cost/Hour", f"${avg_cost_per_hour:.4f}")
+
+            # Create cost breakdown charts
+            col1, col2 = st.columns(2)
+
+            with col1:
+                # Pie + Bar combination chart
+                fig_breakdown = self.chart_creator.create_machine_cost_breakdown_chart(machine_breakdown,
+                                                                                       selected_machine)
+                st.plotly_chart(fig_breakdown, use_container_width=True)
+
+            with col2:
+                # Detailed service breakdown
+                fig_details = self.chart_creator.create_machine_details_chart(machine_breakdown, selected_machine)
+                st.plotly_chart(fig_details, use_container_width=True)
+
+            # Category breakdown table
+            st.markdown("#### 📊 Category Breakdown Table")
+
+            # Format breakdown data for display
+            display_breakdown = machine_breakdown.copy()
+            display_breakdown['Cost'] = display_breakdown['Cost'].apply(lambda x: f"${x:,.2f}")
+            display_breakdown['Quantity'] = display_breakdown['Quantity'].apply(lambda x: f"{x:,.2f}")
+            display_breakdown['Cost_Percentage'] = display_breakdown['Cost_Percentage'].apply(lambda x: f"{x:.1f}%")
+
+            display_breakdown = display_breakdown[
+                ['CostCategory', 'Cost', '% of Machine', 'Quantity', 'ConsumedService', 'MeterCategory']]
+            display_breakdown.columns = ['Cost Category', 'Cost', '% of Machine', 'Quantity', 'Service Provider',
+                                         'Meter Category']
+
+            st.dataframe(display_breakdown, use_container_width=True, hide_index=True)
+
+            # Debug section to help troubleshoot calculation differences
+            with st.expander("🔧 **Debug: Calculation Comparison Across All Sections**", expanded=False):
+                try:
+                    debug_info = data.debug_machine_calculation(selected_rg, selected_machine)
+
+                    if debug_info:
+                        # Overall consistency check
+                        max_diff = debug_info.get('max_difference', 0)
+                        all_match = debug_info.get('all_match', False)
+
+                        if all_match:
+                            st.success(f"✅ **All calculations match!** Maximum difference: ${max_diff:,.2f}")
+                        else:
+                            st.error(f"❌ **Calculations inconsistent!** Maximum difference: ${max_diff:,.2f}")
+
+                        # Show all calculation methods
+                        st.markdown("**Comparison Across All Calculation Methods:**")
+                        totals_summary = debug_info.get('totals_summary', {})
+
+                        col1, col2, col3, col4, col5 = st.columns(5)
+
+                        with col1:
+                            st.metric("RG Table", f"${totals_summary.get('table', 0):,.2f}")
+                            st.caption("machines_by_resource_group()")
+
+                        with col2:
+                            st.metric("Breakdown", f"${totals_summary.get('breakdown', 0):,.2f}")
+                            st.caption("machine_cost_breakdown()")
+
+                        with col3:
+                            st.metric("Cost by Machine", f"${totals_summary.get('cost_by_machine', 0):,.2f}")
+                            st.caption("get_cost_by_machine(related=True)")
+
+                        with col4:
+                            st.metric("Simple Cost", f"${totals_summary.get('cost_by_machine_simple', 0):,.2f}")
+                            st.caption("get_cost_by_machine(related=False)")
+
+                        with col5:
+                            st.metric("Efficiency", f"${totals_summary.get('efficiency', 0):,.2f}")
+                            st.caption("get_efficiency_metrics()")
+
+                        st.markdown("**Related Resources Included:**")
+                        if debug_info.get('related_resources'):
+                            related_df = pd.DataFrame(debug_info['related_resources'])
+                            related_df['Cost'] = related_df['Cost'].apply(lambda x: f"${x:,.2f}")
+                            st.dataframe(related_df, use_container_width=True, hide_index=True)
+                            st.write(
+                                f"**Total from related resources:** ${debug_info.get('related_resources_total', 0):,.2f}")
+                        else:
+                            st.write("No related resources found")
+
+                        st.markdown("**Breakdown by Category:**")
+                        if debug_info.get('breakdown_by_category'):
+                            breakdown_debug_df = pd.DataFrame(debug_info['breakdown_by_category'])
+                            breakdown_debug_df['Cost'] = breakdown_debug_df['Cost'].apply(lambda x: f"${x:,.2f}")
+                            st.dataframe(breakdown_debug_df, use_container_width=True, hide_index=True)
+                        else:
+                            st.write("No breakdown data available")
+
+                except Exception as e:
+                    st.error(f"Debug error: {str(e)}")
+
+        else:
+            st.info("👆 Please select a machine from the dropdown to see its detailed cost breakdown by category.")
+
+    def display_traditional_analysis(self, data: AzureInvoiceData):
+        """Display traditional resource group and machine analysis."""
+        st.header("🏗️ Resource Analysis")
+
+        # Get traditional data
+        cost_by_rg = data.get_cost_by_resource_group(use_classified=True)
+        cost_by_machine = data.get_cost_by_machine(include_related=True)
+
+        if cost_by_rg.empty and cost_by_machine.empty:
+            st.warning("No resource data available for analysis.")
+            return
+
+        # Add debug information section
+        with st.expander("🔍 **Resource Group Calculation Details**", expanded=False):
+            total_invoice = data.df['Cost'].sum()
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Invoice Cost", f"${total_invoice:,.2f}")
+                st.caption("Sum of all Cost values")
+            
+            with col2:
+                rg_total = cost_by_rg.sum()
+                st.metric("Sum of RG Costs", f"${rg_total:,.2f}")
+                st.caption("After grouping by RG")
+            
+            with col3:
+                nan_cost = data.df[data.df['ResourceGroup'].isna()]['Cost'].sum()
+                st.metric("NaN RG Costs", f"${nan_cost:,.2f}")
+                st.caption("Rows without RG")
+            
+            # Show top resource groups with validation
+            st.markdown("**Top 5 Resource Groups:**")
+            if not cost_by_rg.empty:
+                debug_df = pd.DataFrame({
+                    'Resource Group': cost_by_rg.head(5).index,
+                    'Cost': [f"${x:,.2f}" for x in cost_by_rg.head(5).values],
+                    '% of Total': [f"{(x/total_invoice*100):.1f}%" for x in cost_by_rg.head(5).values],
+                    'Status': ['✅ Normal' if x <= total_invoice else '❌ ERROR - Exceeds Total!' for x in cost_by_rg.head(5).values]
+                })
+                st.dataframe(debug_df, use_container_width=True, hide_index=True)
+                
+                # Check for any impossible values
+                max_rg_cost = cost_by_rg.max()
+                max_rg_name = cost_by_rg.idxmax()
+                
+                if max_rg_cost > total_invoice:
+                    st.error(f"🚨 **CRITICAL ERROR**: Resource group '{max_rg_name}' shows ${max_rg_cost:,.2f} which exceeds total invoice ${total_invoice:,.2f}")
+                    st.error("This indicates a serious data calculation issue. Please use the Force Refresh button in the sidebar.")
+            
+            # Validation check
+            expected_total = rg_total + nan_cost
+            diff = abs(total_invoice - expected_total)
+            
+            if diff < 0.01:
+                st.success(f"✅ Costs reconcile correctly (difference: ${diff:,.2f})")
+            else:
+                st.error(f"❌ Cost reconciliation issue! Difference: ${diff:,.2f}")
+                st.info("This could indicate data processing issues or duplicate entries.")
+
+        # Resource group analysis
+        if not cost_by_rg.empty:
+            fig1 = self.chart_creator.create_cost_by_resource_group_chart(cost_by_rg)
+            st.plotly_chart(fig1, use_container_width=True)
+
+        # Top machines analysis
+        if not cost_by_machine.empty:
+            fig2 = self.chart_creator.create_top_machines_chart(cost_by_machine, self.TOP_ITEMS_COUNT)
+            st.plotly_chart(fig2, use_container_width=True)
+
+        # Cost vs Usage analysis
+        if not data.df.empty:
+            # Use classified data for consistency if available
+            if data.cost_analyzer:
+                df_for_chart = data.cost_analyzer.classify_costs()
+            else:
+                df_for_chart = data.df
+            fig3 = self.chart_creator.create_cost_usage_comparison_chart(df_for_chart)
+            st.plotly_chart(fig3, use_container_width=True)
+
+    def display_uncategorized_analysis(self, data: AzureInvoiceData):
+        """Display detailed analysis of uncategorized items."""
+        st.header("🔍 Uncategorized Items Analysis")
+
+        if not data.cost_analyzer:
+            st.info("Cost analyzer not available for uncategorized analysis.")
+            return
+
+        # Get validation data
+        validation = data.cost_analyzer.validate_cost_reconciliation()
+        df_classified = data.cost_analyzer.classify_costs()
+        uncategorized_items = df_classified[df_classified['CostCategory'] == 'Other']
+
+        if uncategorized_items.empty:
+            st.success(
+                "🎉 **Excellent Categorization!** All costs have been successfully categorized into business categories.")
+            st.info(
+                "💡 This means your Azure invoice contains only known service types that our classification rules can handle.")
+            return
+
+        # Uncategorized summary metrics
+        uncategorized_cost = uncategorized_items['Cost'].sum()
+        uncategorized_count = len(uncategorized_items)
+        uncategorized_percentage = (uncategorized_cost / validation['original_total'] * 100) if validation[
+                                                                                                    'original_total'] > 0 else 0
+
+        # Status indicators
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Uncategorized Cost", f"${uncategorized_cost:,.2f}")
+        with col2:
+            st.metric("Percentage of Total", f"{uncategorized_percentage:.2f}%")
+        with col3:
+            st.metric("Number of Items", f"{uncategorized_count:,}")
+        with col4:
+            # Status based on percentage
+            if uncategorized_percentage < 1:
+                st.success("✅ Excellent")
+            elif uncategorized_percentage < 5:
+                st.warning("⚠️ Good")
+            else:
+                st.error("❌ Needs Review")
+
+        # Alert level based on uncategorized percentage
+        if uncategorized_percentage > 10:
+            st.error(
+                f"🚨 **High Uncategorized Costs**: {uncategorized_percentage:.1f}% of costs are uncategorized. This requires immediate attention!")
+        elif uncategorized_percentage > 5:
+            st.warning(
+                f"⚠️ **Moderate Uncategorized Costs**: {uncategorized_percentage:.1f}% of costs are uncategorized. Consider reviewing classification rules.")
+        elif uncategorized_percentage > 1:
+            st.info(
+                f"💡 **Low Uncategorized Costs**: {uncategorized_percentage:.1f}% of costs are uncategorized. This is normal for evolving Azure services.")
+        else:
+            st.success(
+                f"✅ **Minimal Uncategorized Costs**: Only {uncategorized_percentage:.1f}% uncategorized. Excellent categorization coverage!")
+
+        # Show uncategorized items in a simple table
+        st.subheader("📋 Uncategorized Items Summary")
+        if not uncategorized_items.empty:
+            # Group by service characteristics for summary
+            service_breakdown = uncategorized_items.groupby(['ConsumedService', 'MeterCategory']).agg({
+                'Cost': 'sum',
+                'ResourceName': 'count'
+            }).round(4).reset_index()
+
+            service_breakdown.columns = ['Service Provider', 'Meter Category', 'Total Cost', 'Item Count']
+            service_breakdown['Total Cost'] = service_breakdown['Total Cost'].apply(lambda x: f"${x:,.2f}")
+            service_breakdown = service_breakdown.sort_values('Total Cost', ascending=False,
+                                                              key=lambda x: x.str.replace('$', '').str.replace(',',
+                                                                                                               '').astype(
+                                                                  float))
+
+            st.dataframe(service_breakdown, use_container_width=True, hide_index=True)
+
+    def display_detailed_tables(self, data: AzureInvoiceData):
+        """Display detailed data tables."""
+        st.header("📊 Detailed Data Tables")
+
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "💰 Cost Categories",
+            "🏢 Service Providers",
+            "🏗️ Resource Groups",
+            "🖥️ Top Machines",
+            "⚡ Efficiency Metrics"
+        ])
+
+        with tab1:
+            if data.cost_analyzer:
+                category_summary = data.cost_analyzer.get_category_summary()
+                if not category_summary.empty:
+                    st.dataframe(category_summary, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No cost category data available.")
+
+        with tab2:
+            if data.cost_analyzer:
+                provider_summary = data.cost_analyzer.get_service_provider_analysis()
+                if not provider_summary.empty:
+                    st.dataframe(provider_summary, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No service provider data available.")
+
+        with tab3:
+            cost_by_rg = data.get_cost_by_resource_group(use_classified=True)
+            if not cost_by_rg.empty:
+                df_display = pd.DataFrame({
+                    'Resource Group': cost_by_rg.index,
+                    'Total Cost ($)': cost_by_rg.values.round(2)
+                })
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("No resource group data available.")
+
+        with tab4:
+            cost_by_machine = data.get_cost_by_machine(include_related=True)
+            if not cost_by_machine.empty:
+                df_display = pd.DataFrame({
+                    'Machine': cost_by_machine.index,
+                    'Total Cost ($)': cost_by_machine.values.round(2)
+                }).head(20)  # Show top 20
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("No machine data available.")
+
+        with tab5:
+            efficiency_data = data.get_efficiency_metrics(include_related=True)
+            if not efficiency_data.empty:
+                st.dataframe(efficiency_data.head(20), use_container_width=True)
+            else:
+                st.info("No efficiency data available.")

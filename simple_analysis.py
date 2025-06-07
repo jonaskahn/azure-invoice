@@ -1,6 +1,8 @@
 from typing import Optional, Dict, Any
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 import streamlit as st
 from plotly.subplots import make_subplots
 
@@ -420,3 +422,261 @@ class SimpleChartCreator:
         )
         
         return fig 
+
+
+class SimpleDashboard:
+    """Simple Azure invoice dashboard with basic analysis features."""
+    
+    def __init__(self):
+        self.chart_creator = SimpleChartCreator()
+        # Configuration Constants - Fixed values for consistent display
+        self.MAX_LABEL_LENGTH = 40
+        self.TOP_ITEMS_COUNT = 12  # Show top 12 items in charts
+        self.CHART_HEIGHT = 500
+
+    def display_simple_summary(self, data: SimpleInvoiceData):
+        """Display simple data summary."""
+        summary = data.get_data_summary()
+        
+        if not summary:
+            return
+        
+        st.header("📈 Simple Invoice Summary")
+        
+        # Main metrics
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.metric(
+                "Total Cost",
+                f"${summary['total_cost']:,.2f}",
+                help="Total cost across all services"
+            )
+        
+        with col2:
+            st.metric(
+                "Total Usage",
+                f"{summary['total_quantity']:,.0f} units",
+                help="Total usage across all services"
+            )
+        
+        with col3:
+            st.metric(
+                "Services",
+                summary['unique_services'],
+                help="Number of unique services"
+            )
+        
+        with col4:
+            st.metric(
+                "Regions",
+                summary['unique_regions'],
+                help="Number of unique regions"
+            )
+        
+        with col5:
+            st.metric(
+                "Resources",
+                summary['unique_resources'],
+                help="Number of unique resources"
+            )
+    
+    def display_simple_service_analysis(self, data: SimpleInvoiceData):
+        """Display simple service analysis charts."""
+        st.header("🔧 Service Analysis")
+        
+        # Get service data
+        cost_by_service = data.get_cost_by_service()
+        cost_by_region = data.get_cost_by_region()
+        
+        if cost_by_service.empty and cost_by_region.empty:
+            st.warning("No service data available for analysis.")
+            return
+        
+        # Service cost chart
+        if not cost_by_service.empty:
+            fig1 = self.chart_creator.create_cost_by_service_chart(cost_by_service, self.TOP_ITEMS_COUNT)
+            st.plotly_chart(fig1, use_container_width=True)
+        
+        # Region cost chart
+        if not cost_by_region.empty:
+            fig2 = self.chart_creator.create_cost_by_region_chart(cost_by_region)
+            st.plotly_chart(fig2, use_container_width=True)
+    
+    def display_simple_resource_analysis(self, data: SimpleInvoiceData):
+        """Display simple resource analysis."""
+        st.header("💻 Resource Analysis")
+        
+        cost_by_resource = data.get_cost_by_resource()
+        
+        if cost_by_resource.empty:
+            st.warning("No resource data available for analysis.")
+            return
+        
+        # Resource cost chart
+        fig = self.chart_creator.create_cost_by_resource_chart(cost_by_resource, self.TOP_ITEMS_COUNT)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    def display_simple_efficiency_analysis(self, data: SimpleInvoiceData):
+        """Display simple efficiency analysis."""
+        st.header("⚡ Efficiency Analysis")
+        
+        # Usage vs Cost scatter plot - using consistent calculation methods
+        cost_by_service = data.get_cost_by_service()
+        usage_by_service = data.get_usage_by_service()
+        fig1 = self.chart_creator.create_usage_vs_cost_chart(cost_by_service, usage_by_service)
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Service efficiency metrics
+        service_efficiency = data.get_service_efficiency_metrics()
+        
+        if not service_efficiency.empty:
+            fig2 = self.chart_creator.create_service_efficiency_chart(service_efficiency)
+            st.plotly_chart(fig2, use_container_width=True)
+            
+            # Summary metrics
+            col1, col2, col3 = st.columns(3)
+            
+            total_cost = service_efficiency['Cost'].sum()
+            total_usage = service_efficiency['Quantity'].sum()
+            avg_efficiency = service_efficiency['EfficiencyScore'].mean()
+            
+            with col1:
+                st.metric("Analyzed Cost", f"${total_cost:,.2f}")
+            with col2:
+                st.metric("Analyzed Usage", f"{total_usage:,.0f} units")
+            with col3:
+                st.metric("Avg Cost/Unit", f"${avg_efficiency:.4f}")
+    
+    def display_simple_detailed_tables(self, data: SimpleInvoiceData):
+        """Display simple detailed data tables."""
+        st.header("📊 Detailed Data Tables")
+        
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🔧 Services",
+            "🌍 Regions",
+            "💻 Resources",
+            "📋 Service Breakdown"
+        ])
+        
+        with tab1:
+            cost_by_service = data.get_cost_by_service()
+            usage_by_service = data.get_usage_by_service()
+            
+            if not cost_by_service.empty and not usage_by_service.empty:
+                service_df = pd.DataFrame({
+                    'Service': cost_by_service.index,
+                    'Total Cost ($)': cost_by_service.values.round(2),
+                    'Total Usage': usage_by_service.reindex(cost_by_service.index).values.round(2)
+                })
+                st.dataframe(service_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No service data available.")
+        
+        with tab2:
+            cost_by_region = data.get_cost_by_region()
+            usage_by_region = data.get_usage_by_region()
+            
+            if not cost_by_region.empty:
+                region_df = pd.DataFrame({
+                    'Region': cost_by_region.index,
+                    'Total Cost ($)': cost_by_region.values.round(2)
+                })
+                if not usage_by_region.empty:
+                    region_df['Total Usage'] = usage_by_region.reindex(cost_by_region.index).values.round(2)
+                
+                st.dataframe(region_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No region data available.")
+        
+        with tab3:
+            cost_by_resource = data.get_cost_by_resource()
+            usage_by_resource = data.get_usage_by_resource()
+            
+            if not cost_by_resource.empty:
+                resource_df = pd.DataFrame({
+                    'Resource': cost_by_resource.index,
+                    'Total Cost ($)': cost_by_resource.values.round(2)
+                })
+                if not usage_by_resource.empty:
+                    resource_df['Total Usage'] = usage_by_resource.reindex(cost_by_resource.index).values.round(2)
+                
+                st.dataframe(resource_df.head(20), use_container_width=True, hide_index=True)  # Show top 20
+            else:
+                st.info("No resource data available.")
+        
+        with tab4:
+            service_breakdown = data.get_service_type_breakdown()
+            if not service_breakdown.empty:
+                display_df = service_breakdown.copy()
+                display_df['Cost'] = display_df['Cost'].apply(lambda x: f"${x:,.2f}")
+                display_df['Quantity'] = display_df['Quantity'].apply(lambda x: f"{x:,.2f}")
+                display_df['Cost_Percentage'] = display_df['Cost_Percentage'].apply(lambda x: f"{x:.1f}%")
+                
+                display_df.columns = ['Service', 'Type', 'Region', 'Cost', 'Usage', 'Cost %']
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No service breakdown data available.")
+
+    def run_simple_analysis(self, data: SimpleInvoiceData):
+        """Run the complete simple analysis dashboard."""
+        st.info("📊 **Simple Template Active** - Basic service usage analysis")
+
+        with st.container():
+            # Simple summary
+            self.display_simple_summary(data)
+            st.divider()
+
+            # Service analysis
+            self.display_simple_service_analysis(data)
+            st.divider()
+
+            # Resource analysis
+            self.display_simple_resource_analysis(data)
+            st.divider()
+
+            # Efficiency analysis
+            self.display_simple_efficiency_analysis(data)
+            st.divider()
+
+            # Detailed tables
+            self.display_simple_detailed_tables(data)
+
+            st.success("✅ Simple analysis complete! Service costs, regional distribution, and efficiency metrics calculated.")
+            
+            # Calculation consistency documentation
+            with st.expander("📊 **Calculation Consistency Guarantee**", expanded=False):
+                st.markdown("""
+                **🎯 Consistent Calculations Across All Sections:**
+                
+                This simple template ensures that **all calculations use identical formulas** across every chart and table section:
+                
+                **📈 Standard Calculation Methods:**
+                - **Cost by Service**: `df.groupby('ServiceName')['Cost'].sum().sort_values(ascending=False)`
+                - **Cost by Region**: `df.groupby('ServiceRegion')['Cost'].sum().sort_values(ascending=False)`
+                - **Cost by Resource**: `df.groupby('ServiceResource')['Cost'].sum().sort_values(ascending=False)`
+                - **Usage by Service**: `df.groupby('ServiceName')['Quantity'].sum().sort_values(ascending=False)`
+                - **Usage by Region**: `df.groupby('ServiceRegion')['Quantity'].sum().sort_values(ascending=False)`
+                - **Usage by Resource**: `df.groupby('ServiceResource')['Quantity'].sum().sort_values(ascending=False)`
+                - **Efficiency Score**: `Total_Cost ÷ Total_Quantity` per category
+                
+                **🔍 Consistency Features:**
+                - ✅ **Same Service** appears with **identical cost values** in all charts and tables
+                - ✅ **Same Region** shows **identical cost totals** across all sections
+                - ✅ **Same Resource** displays **consistent values** everywhere
+                - ✅ **Efficiency calculations** use the exact same cost and usage data
+                - ✅ **No discrepancies** between chart data and table data
+                
+                **📊 How We Ensure Consistency:**
+                1. **Centralized Calculation Methods**: All data comes from standardized methods in `SimpleInvoiceData`
+                2. **No Duplicate Aggregations**: Charts receive pre-calculated data, never aggregate directly
+                3. **Unified Data Sources**: All sections use the same calculation functions
+                4. **Consistent Sorting**: All results sorted by cost/usage descending for predictable ordering
+                
+                **🎯 Benefits:**
+                - **Reliable Analysis**: Same category always shows same results
+                - **Trustworthy Data**: No calculation inconsistencies to confuse analysis
+                - **Clear Comparisons**: Easy to cross-reference values between different views
+                - **Audit Trail**: Single source of truth for all calculations
+                """) 
+ 
