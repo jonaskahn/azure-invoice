@@ -5,6 +5,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+# Import separated analysis modules
+from complex_analysis import AzureInvoiceData, CostCategoryAnalyzer, StreamlitChartCreator
+from simple_analysis import SimpleInvoiceData, SimpleChartCreator
+
 
 # Configuration Constants
 class Config:
@@ -47,176 +51,9 @@ class Config:
         'Other': '#C7ECEE'
     }
 
-
-class CostCategoryAnalyzer:
-    """Analyzes and classifies Azure costs into business categories."""
-
-    def __init__(self, dataframe: pd.DataFrame):
-        self.df = dataframe
-        self.category_definitions = self._define_cost_categories()
-
-    def _define_cost_categories(self) -> Dict[str, Dict]:
-        """Define cost category classification rules based on strategy document."""
-        return {
-            'Managed Disks': {
-                'filter_type': 'meter_subcategory',
-                'values': [
-                    'Premium SSD Managed Disks',
-                    'Standard HDD Managed Disks',
-                    'Standard SSD Managed Disks',
-                    'Ultra SSD Managed Disks'
-                ],
-                'description': 'Azure managed disk storage costs'
-            },
-            'CDN': {
-                'filter_type': 'meter_category',
-                'values': ['Content Delivery Network'],
-                'description': 'Content Delivery Network costs'
-            },
-            'Network/IP': {
-                'filter_type': 'meter_category',
-                'values': ['Virtual Network'],
-                'description': 'Virtual network and IP address costs'
-            },
-            'Backup': {
-                'filter_type': 'consumed_service',
-                'values': ['Microsoft.RecoveryServices'],
-                'description': 'Backup and recovery services'
-            },
-            'Load Balancer': {
-                'filter_type': 'meter_category',
-                'values': ['Load Balancer'],
-                'description': 'Load balancer costs'
-            },
-            'VM Compute': {
-                'filter_type': 'complex',
-                'logic': 'microsoft_compute_minus_disks',
-                'description': 'Virtual machine compute costs (excluding disks)'
-            },
-            'Other Storage': {
-                'filter_type': 'complex',
-                'logic': 'storage_minus_managed_disks',
-                'description': 'Storage costs excluding managed disks'
-            },
-            'Bandwidth': {
-                'filter_type': 'meter_category',
-                'values': ['Bandwidth'],
-                'description': 'Data transfer and bandwidth costs'
-            },
-            'Key Vault': {
-                'filter_type': 'consumed_service',
-                'values': ['Microsoft.KeyVault'],
-                'description': 'Key Vault service costs'
-            }
-        }
-
-    def classify_costs(self) -> pd.DataFrame:
-        """Classify each row into cost categories."""
-        if self.df is None or self.df.empty:
-            return pd.DataFrame()
-
-        df_classified = self.df.copy()
-        df_classified['CostCategory'] = 'Other'  # Default category
-
-        # Apply classification rules
-        for category, rules in self.category_definitions.items():
-            if rules['filter_type'] == 'meter_subcategory':
-                mask = df_classified['MeterSubcategory'].isin(rules['values'])
-            elif rules['filter_type'] == 'meter_category':
-                mask = df_classified['MeterCategory'].isin(rules['values'])
-            elif rules['filter_type'] == 'consumed_service':
-                mask = df_classified['ConsumedService'].isin(rules['values'])
-            elif rules['filter_type'] == 'complex':
-                mask = self._apply_complex_logic(df_classified, rules['logic'])
-            else:
-                continue
-
-            df_classified.loc[mask, 'CostCategory'] = category
-
-        return df_classified
-
-    def _apply_complex_logic(self, df: pd.DataFrame, logic: str) -> pd.Series:
-        """Apply complex classification logic."""
-        if logic == 'microsoft_compute_minus_disks':
-            # VM compute costs: Microsoft.Compute service minus managed disk subcategories
-            compute_mask = df['ConsumedService'] == 'Microsoft.Compute'
-            disk_subcategories = self.category_definitions['Managed Disks']['values']
-            not_disk_mask = ~df['MeterSubcategory'].isin(disk_subcategories)
-            return compute_mask & not_disk_mask
-
-        elif logic == 'storage_minus_managed_disks':
-            # Other storage: Storage category minus managed disks
-            storage_mask = df['MeterCategory'] == 'Storage'
-            disk_subcategories = self.category_definitions['Managed Disks']['values']
-            not_disk_mask = ~df['MeterSubcategory'].isin(disk_subcategories)
-            return storage_mask & not_disk_mask
-
-        return pd.Series([False] * len(df))
-
-    def get_category_summary(self) -> pd.DataFrame:
-        """Get summary statistics by cost category."""
-        df_classified = self.classify_costs()
-
-        summary = df_classified.groupby('CostCategory').agg({
-            'Cost': ['sum', 'count', 'mean'],
-            'Quantity': 'sum'
-        }).round(4)
-
-        # Flatten column names
-        summary.columns = ['Total_Cost', 'Record_Count', 'Avg_Cost', 'Total_Quantity']
-        summary = summary.reset_index()
-
-        # Calculate percentages
-        total_cost = summary['Total_Cost'].sum()
-        summary['Cost_Percentage'] = (summary['Total_Cost'] / total_cost * 100).round(2)
-
-        # Sort by cost descending
-        summary = summary.sort_values('Total_Cost', ascending=False)
-
-        return summary
-
-    def get_service_provider_analysis(self) -> pd.DataFrame:
-        """Analyze costs by Azure service provider."""
-        if self.df is None or self.df.empty:
-            return pd.DataFrame()
-
-        provider_summary = self.df.groupby('ConsumedService').agg({
-            'Cost': ['sum', 'count'],
-            'Quantity': 'sum'
-        }).round(4)
-
-        provider_summary.columns = ['Total_Cost', 'Record_Count', 'Total_Quantity']
-        provider_summary = provider_summary.reset_index()
-
-        # Calculate percentages
-        total_cost = provider_summary['Total_Cost'].sum()
-        provider_summary['Cost_Percentage'] = (provider_summary['Total_Cost'] / total_cost * 100).round(2)
-
-        return provider_summary.sort_values('Total_Cost', ascending=False)
-
-    def validate_cost_reconciliation(self) -> Dict[str, Any]:
-        """Validate that all costs are properly categorized."""
-        df_classified = self.classify_costs()
-
-        original_total = self.df['Cost'].sum()
-        categorized_total = df_classified['Cost'].sum()
-        difference = abs(original_total - categorized_total)
-
-        # Category coverage
-        category_totals = df_classified.groupby('CostCategory')['Cost'].sum()
-        uncategorized_cost = category_totals.get('Other', 0)
-        categorized_cost = categorized_total - uncategorized_cost
-
-        return {
-            'original_total': original_total,
-            'categorized_total': categorized_total,
-            'difference': difference,
-            'reconciliation_success': difference < 0.01,
-            'categorized_cost': categorized_cost,
-            'uncategorized_cost': uncategorized_cost,
-            'categorization_coverage': (categorized_cost / original_total * 100) if original_total > 0 else 0,
-            'category_breakdown': category_totals.to_dict()
-        }
+# ===================================================================
+# COMPLEX INVOICE DATA CLASSES (OLD LOGIC - ISOLATED)
+# ===================================================================
 
 
 class AzureInvoiceData:
@@ -243,7 +80,7 @@ class AzureInvoiceData:
                 self.df[col] = 'Unknown'
                 st.warning(f"Missing column '{col}' - created with default values")
 
-    def get_cost_by_resource_group(self, use_classified: bool = True) -> pd.Series:
+    def get_cost_by_resource_group(self, use_classified: bool=True) -> pd.Series:
         """Calculate total cost grouped by ResourceGroup.
         
         Args:
@@ -260,7 +97,7 @@ class AzureInvoiceData:
 
         return df_to_use.groupby('ResourceGroup')['Cost'].sum().sort_values(ascending=False)
 
-    def _get_unified_machine_costs(self, include_related: bool = True) -> Dict[str, float]:
+    def _get_unified_machine_costs(self, include_related: bool=True) -> Dict[str, float]:
         """Unified method to calculate machine costs with consistent logic across all sections."""
         if self.df is None or self.df.empty:
             return {}
@@ -296,8 +133,8 @@ class AzureInvoiceData:
 
                 # Also look for related resources (disks, network interfaces, etc.)
                 related_data = clean_df[
-                    (clean_df['ResourceName'].str.contains(machine_name, case=False, na=False)) |
-                    (clean_df['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                    (clean_df['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                    (clean_df['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
                     (clean_df['ResourceName'].str.startswith(machine_name + '_', na=False))
                     ]
 
@@ -314,7 +151,7 @@ class AzureInvoiceData:
 
         return machine_costs
 
-    def get_cost_by_machine(self, include_related: bool = True) -> pd.Series:
+    def get_cost_by_machine(self, include_related: bool=True) -> pd.Series:
         """Calculate total cost grouped by ResourceName (machine).
         
         Args:
@@ -326,7 +163,7 @@ class AzureInvoiceData:
 
         return pd.Series(machine_costs).sort_values(ascending=False)
 
-    def get_usage_by_resource_group(self, use_classified: bool = True) -> pd.Series:
+    def get_usage_by_resource_group(self, use_classified: bool=True) -> pd.Series:
         """Calculate total usage grouped by ResourceGroup.
         
         Args:
@@ -343,7 +180,7 @@ class AzureInvoiceData:
 
         return df_to_use.groupby('ResourceGroup')['Quantity'].sum().sort_values(ascending=False)
 
-    def get_usage_by_machine(self, include_related: bool = True, use_classified: bool = True) -> pd.Series:
+    def get_usage_by_machine(self, include_related: bool=True, use_classified: bool=True) -> pd.Series:
         """Calculate total usage using unified machine logic.
         
         Args:
@@ -381,8 +218,8 @@ class AzureInvoiceData:
 
                 # Also look for related resources
                 related_data = clean_df[
-                    (clean_df['ResourceName'].str.contains(machine_name, case=False, na=False)) |
-                    (clean_df['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                    (clean_df['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                    (clean_df['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
                     (clean_df['ResourceName'].str.startswith(machine_name + '_', na=False))
                     ]
 
@@ -396,7 +233,7 @@ class AzureInvoiceData:
 
         return pd.Series(machine_quantities).sort_values(ascending=False)
 
-    def get_cost_by_resource_group_and_machine(self, use_classified: bool = True) -> pd.DataFrame:
+    def get_cost_by_resource_group_and_machine(self, use_classified: bool=True) -> pd.DataFrame:
         """Get cost breakdown by resource group and machine.
         
         Args:
@@ -418,7 +255,7 @@ class AzureInvoiceData:
                 .reset_index()
                 .sort_values(['ResourceGroup', 'Cost'], ascending=[True, False]))
 
-    def get_efficiency_metrics(self, include_related: bool = True) -> pd.DataFrame:
+    def get_efficiency_metrics(self, include_related: bool=True) -> pd.DataFrame:
         """Calculate efficiency metrics (cost per unit) using unified machine calculation logic.
         
         Args:
@@ -450,8 +287,8 @@ class AzureInvoiceData:
 
                 # Also look for related resources
                 related_data = clean_df[
-                    (clean_df['ResourceName'].str.contains(machine_name, case=False, na=False)) |
-                    (clean_df['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                    (clean_df['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                    (clean_df['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
                     (clean_df['ResourceName'].str.startswith(machine_name + '_', na=False))
                     ]
 
@@ -553,9 +390,9 @@ class AzureInvoiceData:
                        ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot']):
                 # Check if this machine or its related resources are in this resource group
                 machine_related = rg_data[
-                    (rg_data['ResourceName'] == machine_name) |
-                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) |
-                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                    (rg_data['ResourceName'] == machine_name) | 
+                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
                     (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
                     ]
                 if not machine_related.empty:
@@ -567,9 +404,9 @@ class AzureInvoiceData:
             if machine_name in all_machine_costs:
                 # Get detailed info for this machine in this resource group
                 machine_related = rg_data[
-                    (rg_data['ResourceName'] == machine_name) |
-                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) |
-                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                    (rg_data['ResourceName'] == machine_name) | 
+                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
                     (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
                     ]
 
@@ -619,8 +456,8 @@ class AzureInvoiceData:
         # Also look for related resources (disks, network interfaces, etc. that might be associated with this VM)
         # Common patterns: vm-name-disk, vm-name-nic, vm-name_OsDisk, etc.
         related_data = df_classified[
-            (df_classified['ResourceName'].str.contains(resource_name, case=False, na=False)) |
-            (df_classified['ResourceName'].str.startswith(resource_name + '-', na=False)) |
+            (df_classified['ResourceName'].str.contains(resource_name, case=False, na=False)) | 
+            (df_classified['ResourceName'].str.startswith(resource_name + '-', na=False)) | 
             (df_classified['ResourceName'].str.startswith(resource_name + '_', na=False))
             ]
 
@@ -659,9 +496,9 @@ class AzureInvoiceData:
 
         # Look for all resources that might be related to this machine
         related_mask = (
-                (self.df['ResourceName'] == resource_name) |
-                (self.df['ResourceName'].str.contains(resource_name, case=False, na=False)) |
-                (self.df['ResourceName'].str.startswith(resource_name + '-', na=False)) |
+                (self.df['ResourceName'] == resource_name) | 
+                (self.df['ResourceName'].str.contains(resource_name, case=False, na=False)) | 
+                (self.df['ResourceName'].str.startswith(resource_name + '-', na=False)) | 
                 (self.df['ResourceName'].str.startswith(resource_name + '_', na=False))
         )
 
@@ -755,7 +592,7 @@ class AzureInvoiceData:
 
         return debug_info
 
-    def get_efficiency_resource_breakdown(self, include_related: bool = True) -> pd.DataFrame:
+    def get_efficiency_resource_breakdown(self, include_related: bool=True) -> pd.DataFrame:
         """Get detailed breakdown of efficiency metrics by resource group and machine."""
         if self.df is None or self.df.empty:
             return pd.DataFrame()
@@ -792,8 +629,8 @@ class AzureInvoiceData:
                 # Also look for related resources - use string version for pattern matching
                 try:
                     related_data = clean_df[
-                        (clean_df['ResourceName'].str.contains(resource_name_str, case=False, na=False)) |
-                        (clean_df['ResourceName'].str.startswith(resource_name_str + '-', na=False)) |
+                        (clean_df['ResourceName'].str.contains(resource_name_str, case=False, na=False)) | 
+                        (clean_df['ResourceName'].str.startswith(resource_name_str + '-', na=False)) | 
                         (clean_df['ResourceName'].str.startswith(resource_name_str + '_', na=False))
                         ]
                 except (TypeError, ValueError):
@@ -853,6 +690,237 @@ class AzureInvoiceData:
 
         return sorted(resource_groups)
 
+# ===================================================================
+# SIMPLE CHART CREATOR (NEW LOGIC - ISOLATED)
+# ===================================================================
+
+
+class SimpleChartCreator:
+    """Simple chart creator for basic service usage analysis."""
+    
+    def __init__(self):
+        self.theme = Config.CHART_THEME
+    
+    def format_label(self, label: str, max_length: int=Config.MAX_LABEL_LENGTH) -> str:
+        """Format label to specified length."""
+        if len(label) <= max_length:
+            return label.ljust(max_length)
+        return label[:max_length - 3] + "..."
+    
+    def create_cost_by_service_chart(self, cost_data: pd.Series) -> go.Figure:
+        """Create bar chart for cost by service."""
+        if cost_data.empty:
+            return go.Figure()
+        
+        top_services = cost_data.head(Config.TOP_ITEMS_COUNT)
+        formatted_labels = [self.format_label(str(label)) for label in top_services.index]
+        
+        fig = go.Figure(data=[
+            go.Bar(
+                x=formatted_labels,
+                y=top_services.values,
+                text=[f'${value:,.2f}' for value in top_services.values],
+                textposition='outside',
+                marker_color='lightblue',
+                hovertemplate='<b>%{x}</b><br>Cost: $%{y:,.2f}<extra></extra>'
+            )
+        ])
+        
+        fig.update_layout(
+            title={
+                'text': '🔧 Total Cost by Service',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18}
+            },
+            xaxis_title='Service Name',
+            yaxis_title='Cost (USD)',
+            height=Config.CHART_HEIGHT,
+            showlegend=False,
+            xaxis={'tickangle': Config.ROTATION_ANGLE},
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
+        
+        return fig
+    
+    def create_cost_by_region_chart(self, cost_data: pd.Series) -> go.Figure:
+        """Create pie chart for cost by region."""
+        if cost_data.empty:
+            return go.Figure()
+        
+        fig = go.Figure(data=[go.Pie(
+            labels=cost_data.index,
+            values=cost_data.values,
+            hole=0.4,
+            textinfo='label+percent+value',
+            texttemplate='<b>%{label}</b><br>%{percent}<br>$%{value:,.2f}',
+            hovertemplate='<b>%{label}</b><br>Cost: $%{value:,.2f}<br>Percentage: %{percent}<extra></extra>'
+        )])
+        
+        fig.update_layout(
+            title={
+                'text': '🌍 Cost Distribution by Region',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18}
+            },
+            height=Config.CHART_HEIGHT,
+            showlegend=True,
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
+        
+        return fig
+    
+    def create_cost_by_resource_chart(self, cost_data: pd.Series) -> go.Figure:
+        """Create horizontal bar chart for cost by resource."""
+        if cost_data.empty:
+            return go.Figure()
+        
+        top_resources = cost_data.head(Config.TOP_ITEMS_COUNT)
+        
+        fig = go.Figure(data=[go.Bar(
+            y=top_resources.index,
+            x=top_resources.values,
+            orientation='h',
+            text=[f'${value:,.2f}' for value in top_resources.values],
+            textposition='outside',
+            marker_color='lightcoral',
+            hovertemplate='<b>%{y}</b><br>Cost: $%{x:,.2f}<extra></extra>'
+        )])
+        
+        fig.update_layout(
+            title={
+                'text': '💻 Top Resources by Cost',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18}
+            },
+            xaxis_title='Cost (USD)',
+            yaxis_title='Service Resource',
+            height=max(400, len(top_resources) * 40),
+            showlegend=False,
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            margin=dict(l=150, r=50, t=80, b=50)
+        )
+        
+        return fig
+    
+    def create_usage_vs_cost_chart(self, df: pd.DataFrame) -> go.Figure:
+        """Create scatter plot showing usage vs cost by service."""
+        if df is None or df.empty:
+            return go.Figure()
+        
+        # Aggregate by service
+        service_summary = df.groupby('ServiceName').agg({
+            'Cost': 'sum',
+            'Quantity': 'sum'
+        }).reset_index()
+        
+        if service_summary.empty:
+            return go.Figure()
+        
+        fig = go.Figure(data=go.Scatter(
+            x=service_summary['Quantity'],
+            y=service_summary['Cost'],
+            mode='markers+text',
+            text=service_summary['ServiceName'],
+            textposition='top center',
+            marker=dict(
+                size=12,
+                color=service_summary['Cost'],
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title="Cost (USD)")
+            ),
+            hovertemplate='<b>%{text}</b><br>Usage: %{x:,.0f}<br>Cost: $%{y:,.2f}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            title={
+                'text': '📊 Service Usage vs Cost Analysis',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18}
+            },
+            xaxis_title='Total Usage (Quantity)',
+            yaxis_title='Total Cost (USD)',
+            height=Config.CHART_HEIGHT,
+            showlegend=False,
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
+        
+        return fig
+    
+    def create_service_efficiency_chart(self, efficiency_data: pd.DataFrame) -> go.Figure:
+        """Create efficiency chart for services."""
+        if efficiency_data.empty:
+            return go.Figure()
+        
+        top_services = efficiency_data.head(15)
+        
+        fig = make_subplots(
+            rows=1, cols=2,
+            subplot_titles=("Total Cost by Service", "Cost per Unit"),
+            specs=[[{"secondary_y": False}, {"secondary_y": False}]]
+        )
+        
+        # Cost bar chart
+        fig.add_trace(
+            go.Bar(
+                x=top_services['ServiceName'],
+                y=top_services['Cost'],
+                name='Total Cost',
+                marker_color='lightblue',
+                text=[f'${cost:,.0f}' for cost in top_services['Cost']],
+                textposition='outside',
+                showlegend=False
+            ),
+            row=1, col=1
+        )
+        
+        # Efficiency line chart
+        fig.add_trace(
+            go.Scatter(
+                x=top_services['ServiceName'],
+                y=top_services['EfficiencyScore'],
+                mode='lines+markers+text',
+                name='Cost per Unit',
+                line=dict(color='red', width=3),
+                marker=dict(size=8, color='red'),
+                text=[f'${score:.3f}' for score in top_services['EfficiencyScore']],
+                textposition='top center',
+                showlegend=False
+            ),
+            row=1, col=2
+        )
+        
+        fig.update_xaxes(title_text="Service", tickangle=45, row=1, col=1)
+        fig.update_xaxes(title_text="Service", tickangle=45, row=1, col=2)
+        fig.update_yaxes(title_text="Cost (USD)", row=1, col=1)
+        fig.update_yaxes(title_text="Cost per Unit (USD)", row=1, col=2)
+        
+        fig.update_layout(
+            title={
+                'text': '⚡ Service Efficiency Analysis',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 18}
+            },
+            height=600,
+            plot_bgcolor='white',
+            paper_bgcolor='white'
+        )
+        
+        return fig
+
+# ===================================================================
+# COMPLEX CHART CREATOR (OLD LOGIC - ISOLATED)
+# ===================================================================
+
 
 class StreamlitChartCreator:
     """Enhanced chart creator with cost category visualizations."""
@@ -860,7 +928,7 @@ class StreamlitChartCreator:
     def __init__(self):
         self.theme = Config.CHART_THEME
 
-    def format_label(self, label: str, max_length: int = Config.MAX_LABEL_LENGTH) -> str:
+    def format_label(self, label: str, max_length: int=Config.MAX_LABEL_LENGTH) -> str:
         """Format label to specified length, padding with spaces if needed."""
         if len(label) <= max_length:
             return label.ljust(max_length)
@@ -1420,7 +1488,8 @@ class StreamlitDashboard:
     """Enhanced Streamlit dashboard with cost category analysis."""
 
     def __init__(self):
-        self.chart_creator = StreamlitChartCreator()
+        self.chart_creator = StreamlitChartCreator()  # Complex charts
+        self.simple_chart_creator = SimpleChartCreator()  # Simple charts
         self.setup_page_config()
 
     def setup_page_config(self):
@@ -1506,18 +1575,62 @@ class StreamlitDashboard:
         """)
         st.divider()
 
-    def display_file_uploader(self) -> Optional[pd.DataFrame]:
-        """Handle file upload and return processed DataFrame."""
+    def display_file_uploader(self) -> tuple[Optional[pd.DataFrame], str]:
+        """Handle file upload and template selection, return processed DataFrame and template type."""
+        
+        # Template selection
+        st.subheader("📋 Select Analysis Template")
+        template_type = st.radio(
+            "Choose the analysis template that matches your CSV format:",
+            ["Complex (Advanced Azure Invoice)", "Simple (Basic Service Usage)"],
+            help="Select the template that matches your CSV file structure"
+        )
+        
+        # Convert to simple string for easier handling
+        template = "complex" if "Complex" in template_type else "simple"
+        
+        # Display expected format based on template
+        if template == "complex":
+            st.info("""
+            **Complex Template** expects these columns:
+            `Date, Cost, Quantity, ResourceGroup, ResourceName, ConsumedService, MeterCategory, MeterSubcategory`
+            
+            This provides advanced cost categorization, efficiency analysis, and drill-down capabilities.
+            """)
+        else:
+            st.info("""
+            **Simple Template** expects these columns:
+            `SubscriptionName, SubscriptionGuid, Date, ResourceGuid, ServiceName, ServiceType, ServiceRegion, ServiceResource, Quantity, Cost`
+            
+            This provides straightforward service and resource cost analysis.
+            """)
+        
         uploaded_file = st.file_uploader(
-            "Choose your Azure Invoice CSV file",
+            f"Choose your Azure Invoice CSV file ({template_type})",
             type=['csv'],
-            help="Upload your Azure invoice CSV file with columns: Date, Cost, Quantity, ResourceGroup, ResourceName, ConsumedService, MeterCategory, MeterSubcategory"
+            help=f"Upload your CSV file matching the {template} template format"
         )
 
         if uploaded_file is not None:
             try:
                 with st.spinner("Loading and processing your data..."):
                     df = pd.read_csv(uploaded_file, parse_dates=['Date'], low_memory=False)
+                    
+                    # Validate columns based on template
+                    if template == "complex":
+                        required_cols = ['Date', 'Cost', 'Quantity', 'ResourceGroup', 'ResourceName', 'ConsumedService', 'MeterCategory', 'MeterSubcategory']
+                        missing_cols = [col for col in required_cols if col not in df.columns]
+                        if missing_cols:
+                            st.error(f"Complex template missing required columns: {missing_cols}")
+                            st.info("Please ensure your CSV has all required columns for the Complex template.")
+                            return None, template
+                    else:
+                        required_cols = ['SubscriptionName', 'Date', 'ServiceName', 'ServiceType', 'ServiceResource', 'Quantity', 'Cost']
+                        missing_cols = [col for col in required_cols if col not in df.columns]
+                        if missing_cols:
+                            st.error(f"Simple template missing required columns: {missing_cols}")
+                            st.info("Please ensure your CSV has all required columns for the Simple template.")
+                            return None, template
 
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
@@ -1531,15 +1644,14 @@ class StreamlitDashboard:
                         total_cost = pd.to_numeric(df.get('Cost', 0), errors='coerce').sum()
                         st.metric("Total Cost", f"${total_cost:,.2f}")
 
-                    return df
+                    return df, template
 
             except Exception as e:
                 st.error(f"Error loading file: {str(e)}")
-                st.info(
-                    "Please ensure your CSV file has the correct format with columns: Date, Cost, Quantity, ResourceGroup, ResourceName, ConsumedService, MeterCategory, MeterSubcategory")
-                return None
+                st.info(f"Please ensure your CSV file has the correct format for the {template} template.")
+                return None, template
 
-        return None
+        return None, template
 
     def display_enhanced_summary(self, data: AzureInvoiceData):
         """Display enhanced data summary with validation."""
@@ -1922,7 +2034,7 @@ class StreamlitDashboard:
             # Categorize resources
             efficient_resources = efficiency_data[efficiency_data['EfficiencyScore'] <= efficiency_median]
             above_avg_resources = efficiency_data[
-                (efficiency_data['EfficiencyScore'] > efficiency_median) &
+                (efficiency_data['EfficiencyScore'] > efficiency_median) & 
                 (efficiency_data['EfficiencyScore'] <= avg_efficiency * 1.5)
                 ]
             high_cost_resources = efficiency_data[efficiency_data['EfficiencyScore'] > avg_efficiency * 1.5]
@@ -2752,6 +2864,237 @@ class StreamlitDashboard:
             else:
                 st.info("No efficiency data available.")
 
+    # ===================================================================
+    # SIMPLE DASHBOARD METHODS (NEW LOGIC - ISOLATED)
+    # ===================================================================
+    
+    def display_simple_summary(self, data: SimpleInvoiceData):
+        """Display simple data summary."""
+        summary = data.get_data_summary()
+        
+        if not summary:
+            return
+        
+        st.header("📈 Simple Invoice Summary")
+        
+        # Main metrics
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.metric(
+                "Total Cost",
+                f"${summary['total_cost']:,.2f}",
+                help="Total cost across all services"
+            )
+        
+        with col2:
+            st.metric(
+                "Total Usage",
+                f"{summary['total_quantity']:,.0f} units",
+                help="Total usage across all services"
+            )
+        
+        with col3:
+            st.metric(
+                "Services",
+                summary['unique_services'],
+                help="Number of unique services"
+            )
+        
+        with col4:
+            st.metric(
+                "Regions",
+                summary['unique_regions'],
+                help="Number of unique regions"
+            )
+        
+        with col5:
+            st.metric(
+                "Resources",
+                summary['unique_resources'],
+                help="Number of unique resources"
+            )
+    
+    def display_simple_service_analysis(self, data: SimpleInvoiceData):
+        """Display simple service analysis charts."""
+        st.header("🔧 Service Analysis")
+        
+        # Get service data
+        cost_by_service = data.get_cost_by_service()
+        cost_by_region = data.get_cost_by_region()
+        
+        if cost_by_service.empty and cost_by_region.empty:
+            st.warning("No service data available for analysis.")
+            return
+        
+        # Service cost chart
+        if not cost_by_service.empty:
+            fig1 = self.simple_chart_creator.create_cost_by_service_chart(cost_by_service)
+            st.plotly_chart(fig1, use_container_width=True)
+        
+        # Region cost chart
+        if not cost_by_region.empty:
+            fig2 = self.simple_chart_creator.create_cost_by_region_chart(cost_by_region)
+            st.plotly_chart(fig2, use_container_width=True)
+    
+    def display_simple_resource_analysis(self, data: SimpleInvoiceData):
+        """Display simple resource analysis."""
+        st.header("💻 Resource Analysis")
+        
+        cost_by_resource = data.get_cost_by_resource()
+        
+        if cost_by_resource.empty:
+            st.warning("No resource data available for analysis.")
+            return
+        
+        # Resource cost chart
+        fig = self.simple_chart_creator.create_cost_by_resource_chart(cost_by_resource)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    def display_simple_efficiency_analysis(self, data: SimpleInvoiceData):
+        """Display simple efficiency analysis."""
+        st.header("⚡ Efficiency Analysis")
+        
+        # Usage vs Cost scatter plot
+        fig1 = self.simple_chart_creator.create_usage_vs_cost_chart(data.df)
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Service efficiency metrics
+        service_efficiency = data.get_service_efficiency_metrics()
+        
+        if not service_efficiency.empty:
+            fig2 = self.simple_chart_creator.create_service_efficiency_chart(service_efficiency)
+            st.plotly_chart(fig2, use_container_width=True)
+            
+            # Summary metrics
+            col1, col2, col3 = st.columns(3)
+            
+            total_cost = service_efficiency['Cost'].sum()
+            total_usage = service_efficiency['Quantity'].sum()
+            avg_efficiency = service_efficiency['EfficiencyScore'].mean()
+            
+            with col1:
+                st.metric("Analyzed Cost", f"${total_cost:,.2f}")
+            with col2:
+                st.metric("Analyzed Usage", f"{total_usage:,.0f} units")
+            with col3:
+                st.metric("Avg Cost/Unit", f"${avg_efficiency:.4f}")
+    
+    def display_simple_detailed_tables(self, data: SimpleInvoiceData):
+        """Display simple detailed data tables."""
+        st.header("📊 Detailed Data Tables")
+        
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🔧 Services",
+            "🌍 Regions",
+            "💻 Resources",
+            "📋 Service Breakdown"
+        ])
+        
+        with tab1:
+            cost_by_service = data.get_cost_by_service()
+            usage_by_service = data.get_usage_by_service()
+            
+            if not cost_by_service.empty and not usage_by_service.empty:
+                service_df = pd.DataFrame({
+                    'Service': cost_by_service.index,
+                    'Total Cost ($)': cost_by_service.values.round(2),
+                    'Total Usage': usage_by_service.reindex(cost_by_service.index).values.round(2)
+                })
+                st.dataframe(service_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No service data available.")
+        
+        with tab2:
+            cost_by_region = data.get_cost_by_region()
+            if not cost_by_region.empty:
+                region_df = pd.DataFrame({
+                    'Region': cost_by_region.index,
+                    'Total Cost ($)': cost_by_region.values.round(2)
+                })
+                st.dataframe(region_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No region data available.")
+        
+        with tab3:
+            cost_by_resource = data.get_cost_by_resource()
+            usage_by_resource = data.get_usage_by_resource()
+            
+            if not cost_by_resource.empty:
+                resource_df = pd.DataFrame({
+                    'Resource': cost_by_resource.index,
+                    'Total Cost ($)': cost_by_resource.values.round(2)
+                })
+                if not usage_by_resource.empty:
+                    resource_df['Total Usage'] = usage_by_resource.reindex(cost_by_resource.index).values.round(2)
+                
+                st.dataframe(resource_df.head(20), use_container_width=True, hide_index=True)  # Show top 20
+            else:
+                st.info("No resource data available.")
+        
+        with tab4:
+            service_breakdown = data.get_service_type_breakdown()
+            if not service_breakdown.empty:
+                display_df = service_breakdown.copy()
+                display_df['Cost'] = display_df['Cost'].apply(lambda x: f"${x:,.2f}")
+                display_df['Quantity'] = display_df['Quantity'].apply(lambda x: f"{x:,.2f}")
+                display_df['Cost_Percentage'] = display_df['Cost_Percentage'].apply(lambda x: f"{x:.1f}%")
+                
+                display_df.columns = ['Service', 'Type', 'Region', 'Cost', 'Usage', 'Cost %']
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No service breakdown data available.")
+
+    def display_simple_sidebar_controls(self, data: Optional[SimpleInvoiceData]):
+        """Display simple sidebar with controls and options."""
+        with st.sidebar:
+            st.subheader("⚙️ Simple Analysis Options")
+            
+            if data is not None:
+                summary = data.get_data_summary()
+                
+                st.markdown("**📊 Quick Stats:**")
+                st.text(f"• Services: {summary.get('unique_services', 0)}")
+                st.text(f"• Service Types: {summary.get('unique_service_types', 0)}")
+                st.text(f"• Regions: {summary.get('unique_regions', 0)}")
+                st.text(f"• Resources: {summary.get('unique_resources', 0)}")
+                st.text(f"• Subscriptions: {summary.get('unique_subscriptions', 0)}")
+                
+                st.divider()
+                
+                st.markdown("**📋 Export Options**")
+                if st.button("🖨️ Print / Export PDF", use_container_width=True):
+                    st.success("📄 Print dialog opening...")
+                
+                st.markdown("**🎨 Chart Options**")
+                chart_height = st.slider("Chart Height", 300, 800, Config.CHART_HEIGHT)
+                Config.CHART_HEIGHT = chart_height
+                
+                top_items = st.slider("Show Top N Items", 5, 50, Config.TOP_ITEMS_COUNT)
+                Config.TOP_ITEMS_COUNT = top_items
+            
+            else:
+                st.info("Upload a CSV file to access analysis options.")
+            
+            st.markdown("**ℹ️ About Simple Template**")
+            st.markdown("""
+            **Simple Azure Invoice Analyzer**
+            
+            Features:
+            - 🔧 Service cost analysis
+            - 🌍 Regional cost distribution  
+            - 💻 Resource cost breakdown
+            - ⚡ Basic efficiency metrics
+            - 📊 Interactive visualizations
+            
+            **Required CSV Columns:**
+            SubscriptionName, Date, ServiceName, ServiceType, ServiceRegion, ServiceResource, Quantity, Cost
+            """)
+
+    # ===================================================================
+    # COMPLEX DASHBOARD METHODS (OLD LOGIC - ISOLATED) 
+    # ===================================================================
+
     def display_sidebar_controls(self, data: Optional[AzureInvoiceData]):
         """Display enhanced sidebar with controls and options."""
         with st.sidebar:
@@ -2868,56 +3211,93 @@ class StreamlitDashboard:
             """)
 
     def run(self):
-        """Enhanced main application entry point."""
+        """Enhanced main application entry point with template support."""
         self.display_header()
 
-        df = self.display_file_uploader()
+        df, template = self.display_file_uploader()
 
         if df is not None:
-            data = AzureInvoiceData(df)
-            self.display_sidebar_controls(data)
+            if template == "complex":
+                # ===================================================================
+                # COMPLEX TEMPLATE LOGIC (OLD LOGIC - ISOLATED)
+                # ===================================================================
+                st.info("🔧 **Complex Template Active** - Advanced Azure invoice analysis with cost categorization")
+                
+                data = AzureInvoiceData(df)
+                self.display_sidebar_controls(data)
 
-            with st.container():
-                # Enhanced summary with validation
-                self.display_enhanced_summary(data)
-                st.divider()
+                with st.container():
+                    # Enhanced summary with validation
+                    self.display_enhanced_summary(data)
+                    st.divider()
 
-                # Cost category analysis (new primary feature)
-                self.display_cost_category_analysis(data)
-                st.divider()
+                    # Cost category analysis (new primary feature)
+                    self.display_cost_category_analysis(data)
+                    st.divider()
 
-                # Service provider analysis (new feature)
-                self.display_service_provider_analysis(data)
-                st.divider()
+                    # Service provider analysis (new feature)
+                    self.display_service_provider_analysis(data)
+                    st.divider()
 
-                # Efficiency analysis (new feature)
-                self.display_efficiency_analysis(data)
-                st.divider()
+                    # Efficiency analysis (new feature)
+                    self.display_efficiency_analysis(data)
+                    st.divider()
 
-                # Interactive drill-down analysis (new feature)
-                self.display_interactive_drill_down(data)
-                st.divider()
+                    # Interactive drill-down analysis (new feature)
+                    self.display_interactive_drill_down(data)
+                    st.divider()
 
-                # Traditional resource analysis
-                self.display_traditional_analysis(data)
-                st.divider()
+                    # Traditional resource analysis
+                    self.display_traditional_analysis(data)
+                    st.divider()
 
-                # Uncategorized items analysis (new prominent section)
-                self.display_uncategorized_analysis(data)
-                st.divider()
+                    # Uncategorized items analysis (new prominent section)
+                    self.display_uncategorized_analysis(data)
+                    st.divider()
 
-                # Enhanced detailed tables
-                self.display_detailed_tables(data)
+                    # Enhanced detailed tables
+                    self.display_detailed_tables(data)
 
-                st.success(
-                    "✅ Enhanced analysis complete! Cost categories classified, validation performed, and efficiency metrics calculated.")
+                    st.success(
+                        "✅ Enhanced analysis complete! Cost categories classified, validation performed, and efficiency metrics calculated.")
+            
+            else:
+                # ===================================================================
+                # SIMPLE TEMPLATE LOGIC (NEW LOGIC - ISOLATED)
+                # ===================================================================
+                st.info("📊 **Simple Template Active** - Basic service usage analysis")
+                
+                data = SimpleInvoiceData(df)
+                self.display_simple_sidebar_controls(data)
+
+                with st.container():
+                    # Simple summary
+                    self.display_simple_summary(data)
+                    st.divider()
+
+                    # Service analysis
+                    self.display_simple_service_analysis(data)
+                    st.divider()
+
+                    # Resource analysis
+                    self.display_simple_resource_analysis(data)
+                    st.divider()
+
+                    # Efficiency analysis
+                    self.display_simple_efficiency_analysis(data)
+                    st.divider()
+
+                    # Detailed tables
+                    self.display_simple_detailed_tables(data)
+
+                    st.success("✅ Simple analysis complete! Service costs, regional distribution, and efficiency metrics calculated.")
 
         else:
-            st.info("📁 Please upload your Azure Invoice CSV file to begin enhanced analysis!")
+            st.info("📁 Please select a template and upload your Azure Invoice CSV file to begin analysis!")
 
-            with st.expander("📋 Required CSV Format"):
+            with st.expander("📋 Template Formats"):
                 st.markdown("""
-                Your CSV file should contain these columns:
+                **Complex Template (Advanced Analysis):**
                 - **Date**: Invoice date
                 - **Cost**: Cost amount (numeric)
                 - **Quantity**: Usage quantity (numeric)
@@ -2926,6 +3306,18 @@ class StreamlitDashboard:
                 - **ConsumedService**: Azure service provider (e.g., Microsoft.Compute)
                 - **MeterCategory**: Service category (e.g., Storage, Virtual Network)
                 - **MeterSubcategory**: Detailed service type (e.g., Premium SSD Managed Disks)
+                
+                **Simple Template (Basic Analysis):**
+                - **SubscriptionName**: Azure subscription name
+                - **SubscriptionGuid**: Subscription ID
+                - **Date**: Invoice date
+                - **ResourceGuid**: Resource ID
+                - **ServiceName**: Service name (e.g., Virtual Machines)
+                - **ServiceType**: Service type (e.g., Dsv4 Series)
+                - **ServiceRegion**: Azure region (e.g., US West 2)
+                - **ServiceResource**: Resource type (e.g., D2s v4)
+                - **Quantity**: Usage quantity (numeric)
+                - **Cost**: Cost amount (numeric)
                 """)
 
 
