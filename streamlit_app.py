@@ -53,42 +53,14 @@ class MainDashboard:
         """Display the main application header."""
         st.markdown("""
         <div class="main-header">
-            <h1>📊 Azure Invoice Analyzer</h1>
+            <h1>📊 Azure Invoice Analyzer Pro</h1>
             <p>Comprehensive Azure cost analysis with advanced insights</p>
         </div>
         """, unsafe_allow_html=True)
     
     def display_template_selection(self):
         """Display template selection and return selected template."""
-        st.markdown('<div class="template-selector">', unsafe_allow_html=True)
         st.markdown("### 🎯 **Choose Analysis Template**")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            **🔧 Complex (Advanced Azure Invoice)**
-            - Advanced cost categorization
-            - Resource group analysis
-            - Machine-level breakdowns
-            - Service provider analysis
-            - Efficiency metrics
-            - Interactive drill-down
-            
-            *Best for: Detailed Azure Enterprise invoices*
-            """)
-        
-        with col2:
-            st.markdown("""
-            **📊 Simple (Basic Service Usage)**
-            - Service cost analysis
-            - Regional distribution
-            - Resource cost breakdown
-            - Basic efficiency metrics
-            - Clean visualizations
-            
-            *Best for: Simple usage reports*
-            """)
         
         template = st.radio(
             "**Select Template:**",
@@ -103,9 +75,13 @@ class MainDashboard:
     
     def display_file_upload(self, template: str):
         """Display file upload section and return uploaded data."""
-        st.markdown("### 📂 **Upload Your CSV File**")
-        
-        # Show required columns based on template
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file",
+            type="csv",
+            help="Upload your Azure invoice CSV file for analysis"
+        )
+
+
         if "Complex" in template:
             st.info("""
             **Required columns for Complex template:**
@@ -119,12 +95,7 @@ class MainDashboard:
             ServiceType, ServiceRegion, ServiceResource, Quantity, Cost
             """)
         
-        uploaded_file = st.file_uploader(
-            "Choose a CSV file",
-            type="csv",
-            help="Upload your Azure invoice CSV file for analysis"
-        )
-        
+
         if uploaded_file is not None:
             try:
                 with st.spinner("🔄 Loading and processing CSV file..."):
