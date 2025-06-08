@@ -225,7 +225,7 @@ class AzureInvoiceData:
             st.warning(
                 f"⚠️ Found unusually high individual cost: ${max_individual_cost:,.2f} (Total: ${total_cost:,.2f})")
 
-    def get_cost_by_resource_group(self, use_classified: bool = True) -> pd.Series:
+    def get_cost_by_resource_group(self, use_classified: bool=True) -> pd.Series:
         """Calculate total cost grouped by ResourceGroup with comprehensive validation."""
         if self.df is None or 'ResourceGroup' not in self.df.columns:
             return pd.Series(dtype=float)
@@ -303,7 +303,7 @@ class AzureInvoiceData:
 
         return cost_by_rg
 
-    def _get_unified_machine_costs(self, include_related: bool = True) -> Dict[str, float]:
+    def _get_unified_machine_costs(self, include_related: bool=True) -> Dict[str, float]:
         """Unified method to calculate machine costs with consistent logic across all sections."""
         if self.df is None or self.df.empty:
             return {}
@@ -394,7 +394,7 @@ class AzureInvoiceData:
 
         return machine_costs
 
-    def get_cost_by_machine(self, include_related: bool = True) -> pd.Series:
+    def get_cost_by_machine(self, include_related: bool=True) -> pd.Series:
         """Calculate total cost grouped by ResourceName (machine)."""
         machine_costs = self._get_unified_machine_costs(include_related=include_related)
         if not machine_costs:
@@ -402,7 +402,7 @@ class AzureInvoiceData:
 
         return pd.Series(machine_costs).sort_values(ascending=False)
 
-    def get_efficiency_metrics(self, include_related: bool = True) -> pd.DataFrame:
+    def get_efficiency_metrics(self, include_related: bool=True) -> pd.DataFrame:
         """Calculate efficiency metrics (cost per unit) using unified machine calculation logic."""
         if self.df is None or self.df.empty:
             return pd.DataFrame()
@@ -579,9 +579,9 @@ class AzureInvoiceData:
                        ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot']):
                 # Check if this machine or its related resources are in this resource group
                 machine_related = rg_data[
-                    (rg_data['ResourceName'] == machine_name) |
-                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) |
-                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                    (rg_data['ResourceName'] == machine_name) | 
+                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
                     (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
                     ]
                 if not machine_related.empty:
@@ -764,7 +764,7 @@ class AzureInvoiceData:
 
         return sorted(resource_groups)
 
-    def get_efficiency_resource_breakdown(self, include_related: bool = True) -> pd.DataFrame:
+    def get_efficiency_resource_breakdown(self, include_related: bool=True) -> pd.DataFrame:
         """Get detailed breakdown of efficiency metrics by resource group and machine."""
         if self.df is None or self.df.empty:
             return pd.DataFrame()
@@ -802,8 +802,8 @@ class AzureInvoiceData:
                 # Also look for related resources - use string version for pattern matching
                 try:
                     related_data = clean_df[
-                        (clean_df['ResourceName'].str.contains(resource_name_str, case=False, na=False)) |
-                        (clean_df['ResourceName'].str.startswith(resource_name_str + '-', na=False)) |
+                        (clean_df['ResourceName'].str.contains(resource_name_str, case=False, na=False)) | 
+                        (clean_df['ResourceName'].str.startswith(resource_name_str + '-', na=False)) | 
                         (clean_df['ResourceName'].str.startswith(resource_name_str + '_', na=False))
                         ]
                 except (TypeError, ValueError):
@@ -1000,9 +1000,9 @@ class AzureInvoiceData:
         for machine_name in main_machines:
             # Find all resources in THIS RG that are related to this machine
             machine_related = rg_data[
-                (rg_data['ResourceName'] == machine_name) |
-                (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) |
-                (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                (rg_data['ResourceName'] == machine_name) | 
+                (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
+                (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
                 (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
                 ]
 
@@ -1126,8 +1126,8 @@ class AzureInvoiceData:
             machine_name_str = str(machine_name)
             try:
                 related_mask = (
-                        (df_to_use['ResourceName'].str.contains(machine_name_str, case=False, na=False)) |
-                        (df_to_use['ResourceName'].str.startswith(machine_name_str + '-', na=False)) |
+                        (df_to_use['ResourceName'].str.contains(machine_name_str, case=False, na=False)) | 
+                        (df_to_use['ResourceName'].str.startswith(machine_name_str + '-', na=False)) | 
                         (df_to_use['ResourceName'].str.startswith(machine_name_str + '_', na=False))
                 )
                 related_data = df_to_use[related_mask]
@@ -1158,7 +1158,7 @@ class StreamlitChartCreator:
     def __init__(self):
         pass
 
-    def format_label(self, label: str, max_length: int = 40) -> str:
+    def format_label(self, label: str, max_length: int=40) -> str:
         """Format label to specified length, padding with spaces if needed."""
         if len(label) <= max_length:
             return label.ljust(max_length)
@@ -1624,7 +1624,7 @@ class StreamlitChartCreator:
 
         return fig
 
-    def create_top_machines_chart(self, cost_data: pd.Series, top_items: int = 10) -> go.Figure:
+    def create_top_machines_chart(self, cost_data: pd.Series, top_items: int=10) -> go.Figure:
         """Create interactive bar chart for top machines by cost."""
         if cost_data.empty:
             return go.Figure()
@@ -1662,7 +1662,7 @@ class StreamlitChartCreator:
         return fig
 
     def create_resource_group_breakdown_chart(self, cost_data: pd.DataFrame, resource_group: str,
-                                              top_items: int = 10) -> go.Figure:
+                                              top_items: int=10) -> go.Figure:
         """Create chart for a specific resource group."""
         sub_df = cost_data[cost_data['ResourceGroup'] == resource_group].head(top_items)
         if sub_df.empty:
@@ -2148,7 +2148,7 @@ class ComplexDashboard:
             # Categorize resources
             efficient_resources = efficiency_data[efficiency_data['EfficiencyScore'] <= efficiency_median]
             above_avg_resources = efficiency_data[
-                (efficiency_data['EfficiencyScore'] > efficiency_median) &
+                (efficiency_data['EfficiencyScore'] > efficiency_median) & 
                 (efficiency_data['EfficiencyScore'] <= avg_efficiency * 1.5)
                 ]
             high_cost_resources = efficiency_data[efficiency_data['EfficiencyScore'] > avg_efficiency * 1.5]
@@ -2646,6 +2646,18 @@ class ComplexDashboard:
             with col4:
                 avg_cost_per_hour = machine_cost / machine_quantity if machine_quantity > 0 else 0
                 st.metric("Cost/Hour", f"${avg_cost_per_hour:.4f}")
+
+            # Defensive: Ensure '% of Machine' column exists
+            if '% of Machine' not in machine_breakdown.columns:
+                # Try to create it from Cost
+                try:
+                    if machine_cost > 0:
+                        machine_breakdown['% of Machine'] = (machine_breakdown['Cost'] / machine_cost * 100).round(2)
+                    else:
+                        machine_breakdown['% of Machine'] = 0.0
+                except Exception as e:
+                    st.error(f"Could not calculate '% of Machine' column: {str(e)}")
+                    return
 
             # Create cost breakdown charts
             col1, col2 = st.columns(2)

@@ -83,14 +83,12 @@ class MainDashboard:
         if "Complex" in template:
             st.info("""
             **Required columns for Complex template:**
-            Date, SubscriptionName, SubscriptionGuid, ResourceGroup, ResourceName, 
-            MeterCategory, MeterSubcategory, ConsumedService, Cost, Quantity
+            Date, SubscriptionName, SubscriptionId, ResourceGroup, ResourceName, MeterCategory, MeterSubcategory, ConsumedService, Cost, Quantity
             """)
         else:
             st.info("""
             **Required columns for Simple template:**
-            SubscriptionName, SubscriptionGuid, Date, ResourceGuid, ServiceName, 
-            ServiceType, ServiceRegion, ServiceResource, Quantity, Cost
+            SubscriptionName, SubscriptionGuid, Date, ResourceGuid, ServiceName, ServiceType, ServiceRegion, ServiceResource, Quantity, Cost
             """)
 
         if uploaded_file is not None:
@@ -107,12 +105,15 @@ class MainDashboard:
 
                     # Validate columns based on template
                     if "Complex" in template:
-                        required_cols = ['Date', 'SubscriptionName', 'ResourceGroup', 'Cost', 'Quantity']
+                        required_cols = [
+                            'Date', 'SubscriptionName', 'SubscriptionId', 'ResourceGroup', 'ResourceName',
+                            'MeterCategory', 'MeterSubcategory', 'ConsumedService', 'Cost', 'Quantity'
+                        ]
                         missing_cols = [col for col in required_cols if col not in df.columns]
 
                         if missing_cols:
                             st.error(f"❌ Missing required columns for Complex template: {missing_cols}")
-                            st.info("💡 Try using the Simple template or check your CSV format.")
+                            st.info("💡 Please check your CSV format. All columns are required for advanced analysis.")
                             return None
 
                         # Create complex data object
