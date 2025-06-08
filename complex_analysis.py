@@ -303,6 +303,42 @@ class AzureInvoiceData:
 
         return cost_by_rg
 
+    def _get_related_resources_for_machine(self, machine_name: str, df_to_use: pd.DataFrame) -> list:
+        """Standardized method to find all related resources for a machine.
+        
+        This ensures ALL machine calculation methods use identical logic.
+        """
+        machine_resources = [machine_name]  # Start with the exact machine name
+        
+        # Get all unique resource names, sorted by length (shorter names first to avoid substring issues)
+        all_resources = sorted(df_to_use['ResourceName'].dropna().unique(), key=len)
+        
+        # Look for related resources using precise matching
+        for resource in all_resources:
+            if resource == machine_name:
+                continue  # Already included
+                
+            # Use standardized matching logic
+            is_related = False
+            
+            # Pattern 1: resource starts with machine name + separator
+            if (resource.startswith(machine_name + '-') or
+                    resource.startswith(machine_name + '_')):
+                is_related = True
+                
+            # Pattern 2: resource contains machine name but ensure it's a word boundary
+            elif machine_name in resource:
+                import re
+                # Create pattern that matches machine_name as a complete word/segment
+                pattern = r'\b' + re.escape(machine_name) + r'[\-_]'
+                if re.search(pattern, resource, re.IGNORECASE):
+                    is_related = True
+                    
+            if is_related:
+                machine_resources.append(resource)
+                
+        return machine_resources
+
     def _get_unified_machine_costs(self, include_related: bool=True) -> Dict[str, float]:
         """Unified method to calculate machine costs with consistent logic across all sections."""
         if self.df is None or self.df.empty:
@@ -343,47 +379,26 @@ class AzureInvoiceData:
                 continue
             main_machines.append(resource)
 
-        # Process each main machine and find its related resources
+        # Process each main machine and find its related resources using STANDARDIZED method
         for machine_name in main_machines:
             if machine_name in processed_resources:
                 continue
 
-            # Start with exact match for the machine itself
-            machine_resources = [machine_name]
-            processed_resources.add(machine_name)
-
-            # Look for related resources using more precise matching
-            for resource in all_resources:
-                if resource in processed_resources:
-                    continue
-
-                # Check if this resource is related to the current machine
-                # Use more precise matching to avoid substring issues
-                is_related = False
-
-                # Pattern 1: resource starts with machine name + separator
-                if (resource.startswith(machine_name + '-') or
-                        resource.startswith(machine_name + '_')):
-                    is_related = True
-
-                # Pattern 2: resource contains machine name but ensure it's a word boundary
-                # Only match if machine_name appears as a complete word/segment
-                elif machine_name in resource:
-                    # Check if machine_name appears at word boundaries
-                    import re
-                    # Create pattern that matches machine_name as a complete word/segment
-                    pattern = r'\b' + re.escape(machine_name) + r'[\-_]'
-                    if re.search(pattern, resource, re.IGNORECASE):
-                        is_related = True
-
-                if is_related:
-                    machine_resources.append(resource)
+            # Use the standardized method to find related resources
+            machine_resources = self._get_related_resources_for_machine(machine_name, clean_df)
+            
+            # Filter out already processed resources
+            machine_resources = [r for r in machine_resources if r not in processed_resources]
+            
+            if machine_resources:
+                # Calculate total cost for this machine and its related resources
+                machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
+                if not machine_data.empty:
+                    machine_costs[machine_name] = machine_data['Cost'].sum()
+                    
+                # Mark these resources as processed
+                for resource in machine_resources:
                     processed_resources.add(resource)
-
-            # Calculate total cost for this machine and its related resources
-            machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
-            if not machine_data.empty:
-                machine_costs[machine_name] = machine_data['Cost'].sum()
 
         # Handle any remaining unprocessed resources as standalone machines
         for resource in all_resources:
@@ -419,7 +434,7 @@ class AzureInvoiceData:
         else:
             df_to_use = self.df.copy()
 
-        # Calculate quantities for each machine using the SAME logic as cost calculation
+        # Calculate quantities for each machine using the SAME STANDARDIZED logic as cost calculation
         machine_quantities = {}
         clean_df = df_to_use.dropna(subset=['ResourceName'])
 
@@ -427,7 +442,7 @@ class AzureInvoiceData:
             # Simple exact match only - just group by ResourceName
             machine_quantities = clean_df.groupby('ResourceName')['Quantity'].sum().to_dict()
         else:
-            # Use the exact same logic as cost calculation to ensure consistency
+            # Use the SAME STANDARDIZED logic as the unified cost calculation
             processed_resources = set()
             all_resources = sorted(clean_df['ResourceName'].unique(), key=len)
 
@@ -439,43 +454,26 @@ class AzureInvoiceData:
                     continue
                 main_machines.append(resource)
 
-            # Process each main machine and find its related resources (same logic as cost calculation)
+            # Process each main machine using STANDARDIZED method
             for machine_name in main_machines:
                 if machine_name in processed_resources:
                     continue
 
-                # Start with exact match for the machine itself
-                machine_resources = [machine_name]
-                processed_resources.add(machine_name)
-
-                # Look for related resources using the same precise matching as cost calculation
-                for resource in all_resources:
-                    if resource in processed_resources:
-                        continue
-
-                    # Use the same matching logic as cost calculation
-                    is_related = False
-
-                    # Pattern 1: resource starts with machine name + separator
-                    if (resource.startswith(machine_name + '-') or
-                            resource.startswith(machine_name + '_')):
-                        is_related = True
-
-                    # Pattern 2: resource contains machine name but ensure it's a word boundary
-                    elif machine_name in resource:
-                        import re
-                        pattern = r'\b' + re.escape(machine_name) + r'[\-_]'
-                        if re.search(pattern, resource, re.IGNORECASE):
-                            is_related = True
-
-                    if is_related:
-                        machine_resources.append(resource)
+                # Use the STANDARDIZED method to find related resources
+                machine_resources = self._get_related_resources_for_machine(machine_name, clean_df)
+                
+                # Filter out already processed resources
+                machine_resources = [r for r in machine_resources if r not in processed_resources]
+                
+                if machine_resources:
+                    # Calculate total quantity for this machine and its related resources
+                    machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
+                    if not machine_data.empty:
+                        machine_quantities[machine_name] = machine_data['Quantity'].sum()
+                        
+                    # Mark these resources as processed
+                    for resource in machine_resources:
                         processed_resources.add(resource)
-
-                # Calculate total quantity for this machine and its related resources
-                machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
-                if not machine_data.empty:
-                    machine_quantities[machine_name] = machine_data['Quantity'].sum()
 
             # Handle any remaining unprocessed resources as standalone machines
             for resource in all_resources:
@@ -548,7 +546,10 @@ class AzureInvoiceData:
         return basic_summary
 
     def get_machines_by_resource_group(self, resource_group: str) -> pd.DataFrame:
-        """Get machines (ResourceName) and their costs for a specific resource group."""
+        """Get machines (ResourceName) and their costs for a specific resource group.
+        
+        Now uses the STANDARDIZED method to ensure consistency with all other calculations.
+        """
         if self.df is None or self.df.empty:
             return pd.DataFrame()
 
@@ -568,99 +569,63 @@ class AzureInvoiceData:
         if rg_data.empty:
             return pd.DataFrame()
 
-        # Get all unified machine costs for this resource group
+        # STEP 1: Get ALL machines that have resources in this resource group using STANDARDIZED logic
+        # Get all machines from the unified calculation
         all_machine_costs = self._get_unified_machine_costs(include_related=True)
-
+        
         # Filter to only machines that have resources in this resource group
-        rg_machine_names = set()
-        for machine_name in rg_data['ResourceName'].unique():
-            # Skip infrastructure resources
-            if not any(suffix in machine_name.lower() for suffix in
-                       ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot']):
-                # Check if this machine or its related resources are in this resource group
-                machine_related = rg_data[
-                    (rg_data['ResourceName'] == machine_name) | 
-                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
-                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
-                    (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
-                    ]
-                if not machine_related.empty:
-                    rg_machine_names.add(machine_name)
-
-        # Build machine summary using EXACT SAME logic as manual calculation
-        machines = {}
-        assigned_resources = set()
-
-        # Get all unique resources with their costs
-        all_resources = []
-        for resource_name in rg_data['ResourceName'].unique():
-            if pd.notna(resource_name):
-                resource_data = rg_data[rg_data['ResourceName'] == resource_name]
-                resource_cost = resource_data['Cost'].sum()
-                all_resources.append({
-                    'resource': resource_name,
-                    'cost': resource_cost,
-                    'quantity': resource_data['Quantity'].sum(),
-                    'services': ', '.join(resource_data['ConsumedService'].dropna().astype(str).unique()),
-                    'meter_categories': ', '.join(resource_data['MeterCategory'].dropna().astype(str).unique()),
-                    'is_infrastructure': any(suffix in resource_name.lower() for suffix in
-                                             ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot'])
-                })
-
-        # First pass: Assign exact matches for main machines (non-infrastructure)
-        for resource in all_resources:
-            if not resource['is_infrastructure'] and resource['resource'] not in assigned_resources:
-                machine_name = resource['resource']
-                machines[machine_name] = {
-                    'cost': resource['cost'],
-                    'quantity': resource['quantity'],
-                    'services': resource['services'],
-                    'meter_categories': resource['meter_categories'],
-                    'resources': [resource['resource']]
+        # BUT show the FULL machine cost (like detailed analysis), not just the portion in this RG
+        machines_in_rg = {}
+        
+        for machine_name, total_machine_cost in all_machine_costs.items():
+            # Use the STANDARDIZED method to find all related resources for this machine
+            machine_resources = self._get_related_resources_for_machine(machine_name, clean_df)
+            
+            # Check if ANY of this machine's resources are in the target resource group
+            machine_resources_in_rg = []
+            has_resources_in_rg = False
+            
+            # Find resources in this RG for metadata (services, categories)
+            rg_services = set()
+            rg_categories = set()
+            rg_quantity = 0
+            
+            for resource_name in machine_resources:
+                resource_data_in_rg = rg_data[rg_data['ResourceName'] == resource_name]
+                if not resource_data_in_rg.empty:
+                    machine_resources_in_rg.append(resource_name)
+                    has_resources_in_rg = True
+                    rg_quantity += resource_data_in_rg['Quantity'].sum()
+                    rg_services.update(resource_data_in_rg['ConsumedService'].dropna().astype(str).unique())
+                    rg_categories.update(resource_data_in_rg['MeterCategory'].dropna().astype(str).unique())
+            
+            # If this machine has ANY resources in this RG, include it with FULL cost
+            if has_resources_in_rg:
+                # Get full machine metadata from ALL its resources (not just RG-specific)
+                all_machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
+                full_services = set()
+                full_categories = set()
+                full_quantity = 0
+                
+                if not all_machine_data.empty:
+                    full_services.update(all_machine_data['ConsumedService'].dropna().astype(str).unique())
+                    full_categories.update(all_machine_data['MeterCategory'].dropna().astype(str).unique())
+                    full_quantity = all_machine_data['Quantity'].sum()
+                
+                machines_in_rg[machine_name] = {
+                    'cost': total_machine_cost,  # FULL machine cost, not just RG portion
+                    'quantity': full_quantity,  # FULL machine quantity
+                    'services': ', '.join(sorted(full_services)),
+                    'meter_categories': ', '.join(sorted(full_categories)),
+                    'resources_in_rg': machine_resources_in_rg
                 }
-                assigned_resources.add(resource['resource'])
 
-        # Second pass: Assign infrastructure resources to their parent machines
-        for resource in all_resources:
-            if resource['is_infrastructure'] and resource['resource'] not in assigned_resources:
-                resource_name = resource['resource']
-                assigned = False
+        # STEP 2: Convert to the expected DataFrame format
+        if not machines_in_rg:
+            return pd.DataFrame()
 
-                # Try to find a parent machine for this infrastructure resource
-                for machine_name in machines.keys():
-                    # Simple pattern: infrastructure resource starts with machine name
-                    if (resource_name.startswith(machine_name + '-') or
-                            resource_name.startswith(machine_name + '_')):
-                        machines[machine_name]['cost'] += resource['cost']
-                        machines[machine_name]['quantity'] += resource['quantity']
-                        # Combine services and meter categories
-                        existing_services = set(machines[machine_name]['services'].split(', '))
-                        new_services = set(resource['services'].split(', '))
-                        machines[machine_name]['services'] = ', '.join(existing_services.union(new_services))
-
-                        existing_meters = set(machines[machine_name]['meter_categories'].split(', '))
-                        new_meters = set(resource['meter_categories'].split(', '))
-                        machines[machine_name]['meter_categories'] = ', '.join(existing_meters.union(new_meters))
-
-                        machines[machine_name]['resources'].append(resource_name)
-                        assigned_resources.add(resource_name)
-                        assigned = True
-                        break
-
-                # If not assigned, create standalone entry
-                if not assigned:
-                    machines[resource_name] = {
-                        'cost': resource['cost'],
-                        'quantity': resource['quantity'],
-                        'services': resource['services'],
-                        'meter_categories': resource['meter_categories'],
-                        'resources': [resource_name]
-                    }
-                    assigned_resources.add(resource_name)
-
-        # Convert to the expected format
         machine_totals = []
-        for machine_name, machine_info in machines.items():
+        for machine_name, machine_info in machines_in_rg.items():
             machine_totals.append({
                 'ResourceName': machine_name,
                 'Cost': machine_info['cost'],
@@ -668,9 +633,6 @@ class AzureInvoiceData:
                 'ConsumedService': machine_info['services'],
                 'MeterCategory': machine_info['meter_categories']
             })
-
-        if not machine_totals:
-            return pd.DataFrame()
 
         machine_summary = pd.DataFrame(machine_totals)
 
@@ -682,6 +644,64 @@ class AzureInvoiceData:
         machine_summary = machine_summary.sort_values('Cost', ascending=False)
 
         return machine_summary
+
+    def get_machines_by_resource_group_rg_only(self, resource_group: str) -> pd.DataFrame:
+        """Get machines costs ONLY from resources within the specified resource group.
+        
+        This method ensures Sum of Machines = Resource Group Total by only counting
+        resources that physically exist within the target resource group.
+        """
+        if self.df is None or self.df.empty:
+            return pd.DataFrame()
+
+        if 'ResourceGroup' not in self.df.columns or 'ResourceName' not in self.df.columns:
+            return pd.DataFrame()
+
+        # Use the same data source as other methods
+        if self.cost_analyzer:
+            df_to_use = self.cost_analyzer.classify_costs()
+        else:
+            df_to_use = self.df.copy()
+
+        # Filter out rows with NaN values and get ONLY resources in this RG
+        clean_df = df_to_use.dropna(subset=['ResourceGroup', 'ResourceName'])
+        rg_data = clean_df[clean_df['ResourceGroup'] == resource_group]
+
+        if rg_data.empty:
+            return pd.DataFrame()
+
+        # Group by ResourceName to get individual resource costs WITHIN this RG only
+        machine_costs_in_rg = rg_data.groupby('ResourceName').agg({
+            'Cost': 'sum',
+            'Quantity': 'sum',
+            'ConsumedService': lambda x: ', '.join(x.unique()),
+            'MeterCategory': lambda x: ', '.join(x.unique())
+        }).round(4).reset_index()
+
+        # Calculate percentage within resource group
+        total_rg_cost = machine_costs_in_rg['Cost'].sum()
+        machine_costs_in_rg['Cost_Percentage'] = (machine_costs_in_rg['Cost'] / total_rg_cost * 100).round(2) if total_rg_cost > 0 else 0
+
+        machine_costs_in_rg = machine_costs_in_rg.sort_values('Cost', ascending=False)
+
+        return machine_costs_in_rg
+
+    def _classify_resource_type(self, resource_name: str, machine_name: str) -> str:
+        """Helper method to classify resource types for difference breakdown."""
+        if resource_name == machine_name:
+            return "🖥️ Main Machine"
+        elif any(suffix in resource_name.lower() for suffix in ['_osdisk', 'osdisk']):
+            return "💾 OS Disk"
+        elif any(suffix in resource_name.lower() for suffix in ['_lun_', 'lun']):
+            return "💿 Data Disk"
+        elif any(suffix in resource_name.lower() for suffix in ['-nic', 'nic']):
+            return "🌐 Network Interface"
+        elif any(suffix in resource_name.lower() for suffix in ['-ip', 'publicip']):
+            return "📡 Public IP"
+        elif any(suffix in resource_name.lower() for suffix in ['-nsg', 'nsg']):
+            return "🛡️ Network Security"
+        else:
+            return "🔧 Other Resource"
 
     def get_machine_cost_breakdown(self, resource_name: str) -> pd.DataFrame:
         """Get cost breakdown by category for a specific machine."""
@@ -697,34 +717,8 @@ class AzureInvoiceData:
         # Filter out rows with NaN values in ResourceName
         df_classified = df_classified.dropna(subset=['ResourceName'])
 
-        # Use the same precise resource matching logic as _get_unified_machine_costs
-        machine_resources = [resource_name]  # Start with the exact machine name
-
-        # Look for related resources using precise matching to avoid substring issues
-        all_resources = df_classified['ResourceName'].unique()
-
-        for resource in all_resources:
-            if resource == resource_name:
-                continue  # Already included
-
-            # Use the same matching logic as _get_unified_machine_costs
-            is_related = False
-
-            # Pattern 1: resource starts with machine name + separator
-            if (resource.startswith(resource_name + '-') or
-                    resource.startswith(resource_name + '_')):
-                is_related = True
-
-            # Pattern 2: resource contains machine name but ensure it's a word boundary
-            elif resource_name in resource:
-                import re
-                # Create pattern that matches resource_name as a complete word/segment
-                pattern = r'\b' + re.escape(resource_name) + r'[\-_]'
-                if re.search(pattern, resource, re.IGNORECASE):
-                    is_related = True
-
-            if is_related:
-                machine_resources.append(resource)
+        # Use the STANDARDIZED method to find related resources - ensures consistency
+        machine_resources = self._get_related_resources_for_machine(resource_name, df_classified)
 
         # Get data for this machine and its related resources
         combined_data = df_classified[df_classified['ResourceName'].isin(machine_resources)]
@@ -796,25 +790,9 @@ class AzureInvoiceData:
 
             # Find which resource group this machine belongs to
             if include_related:
-                # Get exact matches first
-                machine_data = clean_df[clean_df['ResourceName'] == resource_name]
-
-                # Also look for related resources - use string version for pattern matching
-                try:
-                    related_data = clean_df[
-                        (clean_df['ResourceName'].str.contains(resource_name_str, case=False, na=False)) | 
-                        (clean_df['ResourceName'].str.startswith(resource_name_str + '-', na=False)) | 
-                        (clean_df['ResourceName'].str.startswith(resource_name_str + '_', na=False))
-                        ]
-                except (TypeError, ValueError):
-                    # If string operations fail, just use exact matches
-                    related_data = pd.DataFrame()
-
-                # Combine exact and related matches, removing duplicates
-                if not related_data.empty:
-                    combined_data = pd.concat([machine_data, related_data]).drop_duplicates()
-                else:
-                    combined_data = machine_data
+                # Use the STANDARDIZED method to find related resources
+                machine_resources = self._get_related_resources_for_machine(resource_name, clean_df)
+                combined_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
             else:
                 combined_data = clean_df[clean_df['ResourceName'] == resource_name]
 
@@ -1122,17 +1100,9 @@ class AzureInvoiceData:
             else:
                 df_to_use = self.df.copy()
 
-            # Find related resources
-            machine_name_str = str(machine_name)
-            try:
-                related_mask = (
-                        (df_to_use['ResourceName'].str.contains(machine_name_str, case=False, na=False)) | 
-                        (df_to_use['ResourceName'].str.startswith(machine_name_str + '-', na=False)) | 
-                        (df_to_use['ResourceName'].str.startswith(machine_name_str + '_', na=False))
-                )
-                related_data = df_to_use[related_mask]
-            except (TypeError, ValueError):
-                related_data = df_to_use[df_to_use['ResourceName'] == machine_name]
+            # Use the STANDARDIZED method to find related resources
+            machine_resources = self._get_related_resources_for_machine(machine_name, df_to_use.dropna(subset=['ResourceName']))
+            related_data = df_to_use[df_to_use['ResourceName'].isin(machine_resources)]
 
             if not related_data.empty:
                 related_details = []
@@ -1805,7 +1775,7 @@ class ComplexDashboard:
         # Add data integrity check section
         if summary.get('duplicate_records', 0) > 0 or summary.get('negative_costs', 0) > 0 or summary.get(
                 'rows_with_nan_rg', 0) > 0:
-            with st.expander("⚠️ **Data Integrity Warnings**", expanded=True):
+            with st.expander("⚠️ **Data Integrity Warnings**", expanded=False):
                 col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
@@ -2606,9 +2576,25 @@ class ComplexDashboard:
         # Display machines table with selection capability
         st.markdown(f"### 🖥️ Machines in Resource Group: **{selected_rg}**")
 
+        calc_method = st.radio(
+            "Please select calculation method:",
+            ["Show Full Machine Costs (includes related resources from other RGs)",
+             "Show RG-Only Costs (only resources within this RG)"],
+            horizontal=True
+        )
+
+        # Recalculate machines data based on selected method
+        if calc_method.startswith("Show RG-Only"):
+            st.info("🔍 **RG-Only Mode**: Showing only the portion of each machine's cost that exists within this specific resource group.")
+            # Use the RG-only calculation method
+            machines_data_display = data.get_machines_by_resource_group_rg_only(selected_rg)
+        else:
+            st.info("🌐 **Full Machine Mode**: Showing complete machine costs (includes related resources from all resource groups).")
+            machines_data_display = machines_data
+
         # Format machines data for display
         try:
-            display_machines = machines_data.copy()
+            display_machines = machines_data_display.copy()
             display_machines['Cost'] = display_machines['Cost'].apply(lambda x: f"${x:,.2f}")
             display_machines['Quantity'] = display_machines['Quantity'].apply(lambda x: f"{x:,.2f}")
             display_machines['Cost_Percentage'] = display_machines['Cost_Percentage'].apply(lambda x: f"{x:.1f}%")
@@ -2622,29 +2608,131 @@ class ComplexDashboard:
             # Display machines table
             st.dataframe(display_machines, use_container_width=True, hide_index=True)
 
-            # Add validation section showing machine total vs resource group total
-            if not machines_data.empty:
-                machine_total = machines_data['Cost'].sum()
+            # Add enhanced validation section with clear explanations
+            if not machines_data_display.empty:
+                machine_total = machines_data_display['Cost'].sum()
 
                 # Get traditional RG cost for comparison
                 traditional_rg_costs = data.get_cost_by_resource_group(use_classified=True)
-                traditional_cost = traditional_rg_costs.get(selected_rg,
-                                                            0) if selected_rg in traditional_rg_costs else 0
+                traditional_cost = traditional_rg_costs.get(selected_rg, 0) if selected_rg in traditional_rg_costs else 0
 
+                st.markdown("#### 🔍 **Cost Calculation Validation**")
+                
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Sum of Machines", f"${machine_total:,.2f}")
+                    st.caption("Machine costs using selected method")
                 with col2:
                     st.metric("Resource Group Total", f"${traditional_cost:,.2f}")
+                    st.caption("Traditional RG aggregation")
                 with col3:
                     diff = abs(machine_total - traditional_cost)
                     status = "✅ Match" if diff < 0.01 else f"❌ Diff: ${diff:,.2f}"
                     st.metric("Validation", status)
 
+                # Enhanced explanation based on calculation method
                 if diff >= 0.01:
-                    st.warning(
-                        f"⚠️ Machine total (${machine_total:,.2f}) differs from RG total (${traditional_cost:,.2f}) by ${diff:,.2f}")
-                    st.info("This could indicate machines with resources spanning multiple resource groups.")
+                    if calc_method.startswith("Show Full Machine"):
+                        st.warning(f"⚠️ **Expected Difference**: ${diff:,.2f}")
+                        st.markdown(f"""
+                        **Why there's a difference in Full Machine Mode:**
+                        - **Sum of Machines (${machine_total:,.2f})**: Includes ALL related resources for each machine, even if they're in other resource groups
+                        - **Resource Group Total (${traditional_cost:,.2f})**: Only includes resources physically located in **{selected_rg}**
+                        - **Difference (${diff:,.2f})**: Represents machine-related resources located in other resource groups
+                        
+                        💡 **This is normal behavior** - machines often have disks, NICs, and other components in different resource groups.
+                        """)
+                        
+                        # Show detailed breakdown of what's included in the difference
+                        with st.expander("🔍 **View Detailed Breakdown: What's in the Difference?**", expanded=False):
+                            try:
+                                st.markdown("**📋 Resources Contributing to the Difference:**")
+                                
+                                # Get classified data
+                                if data.cost_analyzer:
+                                    df_classified = data.cost_analyzer.classify_costs()
+                                else:
+                                    df_classified = data.df.copy()
+                                
+                                df_classified = df_classified.dropna(subset=['ResourceGroup', 'ResourceName'])
+                                
+                                # For each machine in the current RG, find ALL its related resources
+                                difference_breakdown = []
+                                rg_data = df_classified[df_classified['ResourceGroup'] == selected_rg]
+                                
+                                for machine in machines_data_display['ResourceName'].unique():
+                                    # Get ALL related resources for this machine (across all RGs)
+                                    machine_resources = data._get_related_resources_for_machine(machine, df_classified)
+                                    all_machine_data = df_classified[df_classified['ResourceName'].isin(machine_resources)]
+                                    
+                                    # Separate resources IN current RG vs OTHER RGs
+                                    in_current_rg = all_machine_data[all_machine_data['ResourceGroup'] == selected_rg]
+                                    in_other_rgs = all_machine_data[all_machine_data['ResourceGroup'] != selected_rg]
+                                    
+                                    if not in_other_rgs.empty:
+                                        # Group by ResourceGroup to show where the "extra" resources are
+                                        for other_rg, other_rg_data in in_other_rgs.groupby('ResourceGroup'):
+                                            for _, resource in other_rg_data.iterrows():
+                                                difference_breakdown.append({
+                                                    'Machine': machine,
+                                                    'Additional Resource': resource['ResourceName'],
+                                                    'Located in RG': other_rg,
+                                                    'Cost': resource['Cost'],
+                                                    'Resource Type': data._classify_resource_type(resource['ResourceName'], machine),
+                                                    'Service': resource['ConsumedService'],
+                                                    'Category': resource.get('CostCategory', 'Unknown')
+                                                })
+                                
+                                if difference_breakdown:
+                                    diff_df = pd.DataFrame(difference_breakdown)
+                                    
+                                    # Sort by cost descending
+                                    diff_df = diff_df.sort_values('Cost', ascending=False)
+                                    
+                                    # Format cost for display
+                                    diff_df_display = diff_df.copy()
+                                    diff_df_display['Cost'] = diff_df_display['Cost'].apply(lambda x: f"${x:,.2f}")
+                                    
+                                    st.dataframe(diff_df_display, use_container_width=True, hide_index=True)
+                                    
+                                    # Summary by resource group
+                                    st.markdown("**📊 Summary by Resource Group:**")
+                                    rg_summary = diff_df.groupby('Located in RG')['Cost'].sum().sort_values(ascending=False)
+                                    
+                                    rg_summary_display = []
+                                    for rg, cost in rg_summary.items():
+                                        count = len(diff_df[diff_df['Located in RG'] == rg])
+                                        rg_summary_display.append({
+                                            'Resource Group': rg,
+                                            'Additional Cost': f"${cost:,.2f}",
+                                            'Resources': count
+                                        })
+                                    
+                                    rg_summary_df = pd.DataFrame(rg_summary_display)
+                                    st.dataframe(rg_summary_df, use_container_width=True, hide_index=True)
+                                    
+                                    # Verification
+                                    total_additional = diff_df['Cost'].sum()
+                                    st.info(f"💡 **Total Additional Cost**: ${total_additional:,.2f} (Expected difference: ${diff:,.2f})")
+                                    
+                                    if abs(total_additional - diff) < 0.01:
+                                        st.success("✅ **Perfect Match**: Additional resources account for the full difference!")
+                                    else:
+                                        st.warning(f"⚠️ **Partial Match**: Additional resources (${total_additional:,.2f}) don't fully explain difference (${diff:,.2f})")
+                                
+                                else:
+                                    st.info("No additional resources found in other resource groups.")
+                                    
+                            except Exception as e:
+                                st.error(f"Error generating difference breakdown: {str(e)}")
+                    else:
+                        st.error(f"❌ **Unexpected Difference**: ${diff:,.2f}")
+                        st.markdown("""
+                        **In RG-Only Mode, these should match exactly.**
+                        This indicates a calculation issue that needs investigation.
+                        """)
+                else:
+                    st.success("✅ **Perfect Match**: Machine calculations are consistent with resource group totals.")
 
             # Machine selection using radio buttons for better UX
             machine_options = machines_data['ResourceName'].tolist()
@@ -2733,6 +2821,147 @@ class ComplexDashboard:
 
             st.dataframe(display_breakdown, use_container_width=True, hide_index=True)
 
+            # NEW: Resource-by-Resource Breakdown Table
+            st.markdown("#### 🔍 Resource-by-Resource Breakdown")
+            st.markdown("**All individual resources included in this machine's cost calculation:**")
+
+            # Get the detailed resource breakdown
+            try:
+                # Use the same data source and method as the breakdown calculation
+                if data.cost_analyzer:
+                    df_classified = data.cost_analyzer.classify_costs()
+                else:
+                    df_classified = data.df.copy()
+
+                df_classified = df_classified.dropna(subset=['ResourceName'])
+                
+                # Use the STANDARDIZED method to find related resources
+                machine_resources = data._get_related_resources_for_machine(selected_machine, df_classified)
+                
+                # Get data for all related resources
+                combined_data = df_classified[df_classified['ResourceName'].isin(machine_resources)]
+                
+                if not combined_data.empty:
+                    # Show INDIVIDUAL records (not grouped) so each cost category is independent
+                    resource_records = combined_data.copy()
+                    
+                    # Calculate percentage of each record's contribution to total machine cost
+                    total_machine_cost_for_percentage = resource_records['Cost'].sum()
+                    resource_records['Cost_Percentage'] = (resource_records['Cost'] / total_machine_cost_for_percentage * 100).round(2) if total_machine_cost_for_percentage > 0 else 0
+                    
+                    # Sort by cost descending
+                    resource_records = resource_records.sort_values('Cost', ascending=False)
+                    
+                    # Add resource type classification
+                    def classify_resource_type(resource_name):
+                        if resource_name == selected_machine:
+                            return "🖥️ Main Machine"
+                        elif any(suffix in resource_name.lower() for suffix in ['_osdisk', 'osdisk']):
+                            return "💾 OS Disk"
+                        elif any(suffix in resource_name.lower() for suffix in ['_lun_', 'lun']):
+                            return "💿 Data Disk"
+                        elif any(suffix in resource_name.lower() for suffix in ['-nic', 'nic']):
+                            return "🌐 Network Interface"
+                        elif any(suffix in resource_name.lower() for suffix in ['-ip', 'publicip']):
+                            return "📡 Public IP"
+                        elif any(suffix in resource_name.lower() for suffix in ['-nsg', 'nsg']):
+                            return "🛡️ Network Security"
+                        else:
+                            return "🔧 Other Resource"
+                    
+                    resource_records['Resource_Type'] = resource_records['ResourceName'].apply(classify_resource_type)
+                    
+                    # Format for display
+                    display_resources = resource_records.copy()
+                    display_resources['Cost'] = display_resources['Cost'].apply(lambda x: f"${x:,.2f}")
+                    display_resources['Quantity'] = display_resources['Quantity'].apply(lambda x: f"{x:,.2f}")
+                    display_resources['Cost_Percentage'] = display_resources['Cost_Percentage'].apply(lambda x: f"{x:.1f}%")
+                    
+                    # Truncate long text fields for better display
+                    display_resources['MeterSubcategory'] = display_resources['MeterSubcategory'].apply(
+                        lambda x: str(x)[:50] + "..." if len(str(x)) > 50 else str(x)
+                    )
+                    
+                    # Add billing period info if available
+                    if 'Date' in display_resources.columns:
+                        display_resources['Date'] = pd.to_datetime(display_resources['Date']).dt.strftime('%Y-%m-%d')
+                    
+                    # Select and reorder columns for display
+                    available_columns = ['Resource_Type', 'ResourceName', 'Cost', 'Cost_Percentage', 'Quantity',
+                                       'CostCategory', 'ConsumedService', 'MeterCategory', 'MeterSubcategory']
+                    
+                    # Add Date if available
+                    if 'Date' in display_resources.columns:
+                        available_columns.insert(2, 'Date')
+                    
+                    # Only include columns that exist in the DataFrame
+                    display_columns = [col for col in available_columns if col in display_resources.columns]
+                    display_resources = display_resources[display_columns]
+                    
+                    # Set column names
+                    column_names = {
+                        'Resource_Type': 'Type',
+                        'ResourceName': 'Resource Name',
+                        'Cost': 'Cost',
+                        'Cost_Percentage': '% of Total',
+                        'Quantity': 'Quantity',
+                        'CostCategory': 'Cost Category',
+                        'ConsumedService': 'Service Provider',
+                        'MeterCategory': 'Meter Category',
+                        'MeterSubcategory': 'Meter Subcategory',
+                        'Date': 'Date'
+                    }
+                    
+                    display_resources.columns = [column_names.get(col, col) for col in display_resources.columns]
+                    
+                    # Show records with no artificial limit - user can see all records
+                    max_records = st.slider("Number of records to display", min_value=10, max_value=len(resource_records), value=len(resource_records), step=5)
+                    
+                    st.dataframe(display_resources.head(max_records), use_container_width=True, hide_index=True)
+                    
+                    if len(resource_records) > max_records:
+                        st.info(f"💡 Showing top {max_records} of {len(resource_records)} total records. Adjust the slider above to see more.")
+                    
+                    # Summary stats - calculate from unique resources for summary
+                    unique_resources = resource_records['ResourceName'].nunique()
+                    main_machine_cost = resource_records[resource_records['ResourceName'] == selected_machine]['Cost'].sum()
+                    related_cost = total_machine_cost_for_percentage - main_machine_cost
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Records", len(resource_records))
+                    with col2:
+                        st.metric("Unique Resources", unique_resources)
+                    with col3:
+                        st.metric("Main Machine Cost", f"${main_machine_cost:,.2f}")
+                    with col4:
+                        st.metric("Total Machine Cost", f"${total_machine_cost_for_percentage:,.2f}")
+                    
+                    # Category breakdown summary
+                    category_summary = resource_records.groupby('CostCategory')['Cost'].sum().sort_values(ascending=False)
+                    st.markdown("#### 📊 Category Summary from Individual Records")
+                    
+                    category_display = []
+                    for category, cost in category_summary.items():
+                        record_count = len(resource_records[resource_records['CostCategory'] == category])
+                        percentage = (cost / total_machine_cost_for_percentage * 100) if total_machine_cost_for_percentage > 0 else 0
+                        category_display.append({
+                            'Cost Category': category,
+                            'Total Cost': f"${cost:,.2f}",
+                            'Records': record_count,
+                            'Percentage': f"{percentage:.1f}%"
+                        })
+                    
+                    category_df = pd.DataFrame(category_display)
+                    st.dataframe(category_df, use_container_width=True, hide_index=True)
+                    
+                else:
+                    st.warning("No resource data found for this machine.")
+                    
+            except Exception as e:
+                st.error(f"Error generating resource breakdown: {str(e)}")
+                st.info("This might be due to data processing issues. Please check the debug section below for more details.")
+
             # Debug section to help troubleshoot calculation differences
             with st.expander("🔧 **Debug: Calculation Comparison Across All Sections**", expanded=False):
                 try:
@@ -2774,17 +3003,124 @@ class ComplexDashboard:
                             st.metric("Efficiency", f"${totals_summary.get('efficiency', 0):,.2f}")
                             st.caption("get_efficiency_metrics()")
 
-                        st.markdown("**Related Resources Included:**")
-                        if debug_info.get('related_resources'):
-                            related_df = pd.DataFrame(debug_info['related_resources'])
-                            related_df['Cost'] = related_df['Cost'].apply(lambda x: f"${x:,.2f}")
-                            st.dataframe(related_df, use_container_width=True, hide_index=True)
-                            st.write(
-                                f"**Total from related resources:** ${debug_info.get('related_resources_total', 0):,.2f}")
-                        else:
-                            st.write("No related resources found")
+                        st.markdown("**🔍 Detailed Machine Analysis (New Individual Records Logic):**")
+                        
+                        # Get the actual data using the SAME method as the new Resource-by-Resource breakdown
+                        try:
+                            if data.cost_analyzer:
+                                df_for_analysis = data.cost_analyzer.classify_costs()
+                            else:
+                                df_for_analysis = data.df.copy()
 
-                        st.markdown("**Breakdown by Category:**")
+                            df_for_analysis = df_for_analysis.dropna(subset=['ResourceName'])
+                            
+                            # Use the STANDARDIZED method to find related resources (same as new breakdown)
+                            found_resources = data._get_related_resources_for_machine(selected_machine, df_for_analysis)
+                            combined_records = df_for_analysis[df_for_analysis['ResourceName'].isin(found_resources)]
+                            
+                            st.write(f"**Machine name searched:** `{selected_machine}`")
+                            st.write(f"**Resources found by standardized method:** {len(found_resources)}")
+                            st.write(f"**Total individual records:** {len(combined_records)}")
+                            
+                            if not combined_records.empty:
+                                # Show individual record breakdown (first 10 records)
+                                st.markdown("**📋 Sample Individual Records (New Logic):**")
+                                sample_records = combined_records.sort_values('Cost', ascending=False).head(10)
+                                sample_display = []
+                                
+                                for _, record in sample_records.iterrows():
+                                    sample_display.append({
+                                        'Resource Name': record['ResourceName'],
+                                        'Cost': f"${record['Cost']:,.2f}",
+                                        'Category': record['CostCategory'],
+                                        'Service': record['ConsumedService'],
+                                        'Meter Category': record['MeterCategory'],
+                                        'Quantity': f"{record['Quantity']:,.2f}"
+                                    })
+                                
+                                sample_df = pd.DataFrame(sample_display)
+                                st.dataframe(sample_df, use_container_width=True, hide_index=True)
+                                
+                                # Category summary from individual records
+                                st.markdown("**📊 Category Summary (From Individual Records):**")
+                                category_totals = combined_records.groupby('CostCategory').agg({
+                                    'Cost': 'sum',
+                                    'ResourceName': 'count'  # Count of individual records
+                                }).round(2)
+                                category_totals.columns = ['Total Cost', 'Record Count']
+                                category_totals = category_totals.sort_values('Total Cost', ascending=False)
+                                
+                                category_display = []
+                                total_all_categories = category_totals['Total Cost'].sum()
+                                
+                                for category, row in category_totals.iterrows():
+                                    percentage = (row['Total Cost'] / total_all_categories * 100) if total_all_categories > 0 else 0
+                                    category_display.append({
+                                        'Cost Category': category,
+                                        'Total Cost': f"${row['Total Cost']:,.2f}",
+                                        'Records': int(row['Record Count']),
+                                        'Percentage': f"{percentage:.1f}%"
+                                    })
+                                
+                                category_summary_df = pd.DataFrame(category_display)
+                                st.dataframe(category_summary_df, use_container_width=True, hide_index=True)
+                                
+                                # Validation against old method
+                                total_from_individual_records = combined_records['Cost'].sum()
+                                st.success(f"**✅ NEW METHOD TOTAL:** ${total_from_individual_records:,.2f}")
+                                
+                                # Compare with breakdown total
+                                if debug_info.get('breakdown_by_category'):
+                                    old_breakdown_total = sum([cat['Cost'] for cat in debug_info['breakdown_by_category']])
+                                    diff = abs(total_from_individual_records - old_breakdown_total)
+                                    if diff < 0.01:
+                                        st.success(f"✅ **PERFECT CONSISTENCY**: Individual records total matches breakdown method (${old_breakdown_total:,.2f})")
+                                    else:
+                                        st.warning(f"⚠️ **DIFFERENCE**: Individual records (${total_from_individual_records:,.2f}) vs breakdown (${old_breakdown_total:,.2f}) = ${diff:,.2f}")
+                                
+                                # Resource-level summary
+                                st.markdown("**🖥️ Resource-Level Summary:**")
+                                resource_summary = combined_records.groupby('ResourceName').agg({
+                                    'Cost': 'sum',
+                                    'CostCategory': lambda x: len(x.unique()),  # Number of different categories per resource
+                                    'ResourceName': 'count'  # Total records per resource
+                                }).round(2)
+                                resource_summary.columns = ['Total Cost', 'Categories', 'Records']
+                                resource_summary = resource_summary.sort_values('Total Cost', ascending=False)
+                                
+                                # Show top 5 resources
+                                top_resources = []
+                                for resource, row in resource_summary.head(5).iterrows():
+                                    resource_type = "🖥️ Main" if resource == selected_machine else "🔧 Related"
+                                    top_resources.append({
+                                        'Type': resource_type,
+                                        'Resource Name': resource,
+                                        'Total Cost': f"${row['Total Cost']:,.2f}",
+                                        'Categories': int(row['Categories']),
+                                        'Records': int(row['Records'])
+                                    })
+                                
+                                resource_summary_df = pd.DataFrame(top_resources)
+                                st.dataframe(resource_summary_df, use_container_width=True, hide_index=True)
+                                
+                                if len(found_resources) > 5:
+                                    st.info(f"💡 Showing top 5 of {len(found_resources)} related resources")
+                            
+                            else:
+                                st.warning("No individual records found for this machine")
+                                
+                        except Exception as e:
+                            st.error(f"Error in new individual records analysis: {str(e)}")
+                            
+                            # Fallback to old method display
+                            st.markdown("**⬇️ Fallback: Old Method Results**")
+                            if debug_info.get('related_resources'):
+                                related_df = pd.DataFrame(debug_info['related_resources'])
+                                related_df['Cost'] = related_df['Cost'].apply(lambda x: f"${x:,.2f}")
+                                st.dataframe(related_df, use_container_width=True, hide_index=True)
+                                st.write(f"**Total from related resources:** ${debug_info.get('related_resources_total', 0):,.2f}")
+
+                        st.markdown("**📊 Breakdown by Category (Old Method for Comparison):**")
                         if debug_info.get('breakdown_by_category'):
                             breakdown_debug_df = pd.DataFrame(debug_info['breakdown_by_category'])
                             breakdown_debug_df['Cost'] = breakdown_debug_df['Cost'].apply(lambda x: f"${x:,.2f}")
@@ -2894,7 +3230,7 @@ class ComplexDashboard:
                 st.info("This could indicate data processing issues or duplicate entries.")
 
         # Add comprehensive manual calculation for PLG-PRD-GWC-RG01 specifically
-        with st.expander("🔧 **MANUAL STEP-BY-STEP Calculation: PLG-PRD-GWC-RG01**", expanded=True):
+        with st.expander("🔧 **MANUAL STEP-BY-STEP Calculation: PLG-PRD-GWC-RG01**", expanded=False):
             if 'PLG-PRD-GWC-RG01' in cost_by_rg.index:
                 manual_calc = data.manual_calculate_resource_group('PLG-PRD-GWC-RG01')
 
@@ -3019,9 +3355,20 @@ class ComplexDashboard:
             fig1 = self.chart_creator.create_cost_by_resource_group_chart(cost_by_rg)
             st.plotly_chart(fig1, use_container_width=True)
 
-        # Top machines analysis
+                # Top machines analysis
         if not cost_by_machine.empty:
-            fig2 = self.chart_creator.create_top_machines_chart(cost_by_machine, self.TOP_ITEMS_COUNT)
+            # Add slider to control number of machines displayed
+            num_machines = st.slider(
+                "",
+                min_value=5,
+                max_value=min(50, len(cost_by_machine)),
+                value=min(15, len(cost_by_machine)),
+                step=5,
+                key="top_machines_slider"
+            )
+            st.write(f"Showing top {num_machines} of {len(cost_by_machine)} total machines")
+            
+            fig2 = self.chart_creator.create_top_machines_chart(cost_by_machine, num_machines)
             st.plotly_chart(fig2, use_container_width=True)
 
         # Cost vs Usage analysis

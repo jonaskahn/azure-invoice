@@ -138,9 +138,11 @@ class MainDashboard:
 
         return None
 
-    def display_welcome_message(self):
+    def display_welcome_message(self, detail = True):
         """Display welcome message when no file is uploaded."""
         st.markdown("### 👋 Welcome to Azure Invoice Analyzer!")
+        if not detail:
+            return
 
         col1, col2 = st.columns(2)
 
@@ -240,8 +242,7 @@ class MainDashboard:
                 self.simple_dashboard.run_simple_analysis(data)
 
         else:
-            # Show welcome message
-            self.display_welcome_message()
+            st.markdown("*No data available*")
 
 
 def main():
