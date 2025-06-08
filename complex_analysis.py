@@ -207,24 +207,25 @@ class AzureInvoiceData:
         """Validate data integrity and log any anomalies."""
         if self.df is None or self.df.empty:
             return
-            
+
         # Check for duplicate rows
         duplicates = self.df.duplicated().sum()
         if duplicates > 0:
             st.warning(f"⚠️ Found {duplicates} duplicate rows in the data")
-            
+
         # Check for negative costs
         negative_costs = (self.df['Cost'] < 0).sum()
         if negative_costs > 0:
             st.warning(f"⚠️ Found {negative_costs} rows with negative costs")
-            
+
         # Check for extremely high individual costs
         total_cost = self.df['Cost'].sum()
         max_individual_cost = self.df['Cost'].max()
         if max_individual_cost > total_cost * 0.5:  # If any single row is more than 50% of total
-            st.warning(f"⚠️ Found unusually high individual cost: ${max_individual_cost:,.2f} (Total: ${total_cost:,.2f})")
+            st.warning(
+                f"⚠️ Found unusually high individual cost: ${max_individual_cost:,.2f} (Total: ${total_cost:,.2f})")
 
-    def get_cost_by_resource_group(self, use_classified: bool=True) -> pd.Series:
+    def get_cost_by_resource_group(self, use_classified: bool = True) -> pd.Series:
         """Calculate total cost grouped by ResourceGroup with comprehensive validation."""
         if self.df is None or 'ResourceGroup' not in self.df.columns:
             return pd.Series(dtype=float)
@@ -238,71 +239,71 @@ class AzureInvoiceData:
         # Validate source data
         original_total = self.df['Cost'].sum()
         print(f"DEBUG: Original invoice total: ${original_total:,.2f}")
-        
+
         # Clean data before grouping
         clean_df = df_to_use.copy()
-        
+
         # Remove any rows with NaN costs or resource groups
         initial_rows = len(clean_df)
         clean_df = clean_df.dropna(subset=['Cost', 'ResourceGroup'])
         removed_rows = initial_rows - len(clean_df)
-        
+
         if removed_rows > 0:
             print(f"DEBUG: Removed {removed_rows} rows with NaN values")
-        
+
         # Ensure Cost is numeric
         clean_df['Cost'] = pd.to_numeric(clean_df['Cost'], errors='coerce')
         clean_df = clean_df.dropna(subset=['Cost'])
-        
+
         # Group by ResourceGroup and sum costs
         cost_by_rg = clean_df.groupby('ResourceGroup')['Cost'].sum().sort_values(ascending=False)
-        
+
         # Comprehensive validation
         grouped_total = cost_by_rg.sum()
         max_single_rg = cost_by_rg.max() if not cost_by_rg.empty else 0
-        
+
         print(f"DEBUG: After grouping total: ${grouped_total:,.2f}")
         print(f"DEBUG: Max single RG cost: ${max_single_rg:,.2f}")
-        
+
         # Check for impossible values
         if max_single_rg > original_total * 1.1:  # Allow 10% tolerance for rounding
             print(f"ERROR: Resource group cost ${max_single_rg:,.2f} exceeds total ${original_total:,.2f}!")
             print("ERROR: This indicates a serious calculation error!")
-            
+
             # Find the problematic resource group
             problematic_rg = cost_by_rg.idxmax()
             print(f"ERROR: Problematic RG: {problematic_rg}")
-            
+
             # Debug the problematic resource group
             problematic_data = clean_df[clean_df['ResourceGroup'] == problematic_rg]
             print(f"ERROR: RG has {len(problematic_data)} records")
             print(f"ERROR: Individual costs: {problematic_data['Cost'].tolist()[:10]}")
             print(f"ERROR: Sum of individual costs: ${problematic_data['Cost'].sum():,.2f}")
-            
+
             # Return empty series to prevent showing incorrect data
             return pd.Series(dtype=float)
-        
+
         # Check for reasonable total reconciliation
         difference = abs(grouped_total - original_total)
         tolerance = original_total * 0.01  # 1% tolerance
-        
+
         if difference > tolerance:
             print(f"WARNING: Reconciliation difference: ${difference:,.2f} (tolerance: ${tolerance:,.2f})")
-            
+
             # Check for NaN resource groups
             nan_cost = self.df[self.df['ResourceGroup'].isna()]['Cost'].sum()
             if nan_cost > 0:
                 print(f"INFO: ${nan_cost:,.2f} in costs have NaN resource groups")
-        
+
         # Final validation - log top resource groups
         print("DEBUG: Top 5 resource groups:")
         for rg, cost in cost_by_rg.head(5).items():
             percentage = (cost / original_total * 100) if original_total > 0 else 0
             print(f"  {rg}: ${cost:,.2f} ({percentage:.1f}%)")
-        
+
         return cost_by_rg
 
-    def _get_unified_machine_costs(self, include_related: bool=True) -> Dict[str, float]:
+    def _get_unified_machine_costs(self, include_related: bool = True) -> Dict[str, float]:
         """Unified method to calculate machine costs with consistent logic across all sections."""
         if self.df is None or self.df.empty:
             return {}
@@ -329,41 +330,42 @@ class AzureInvoiceData:
         # For related resources logic, we need to be more careful to avoid double-counting
         machine_costs = {}
         processed_resources = set()  # Track which resources we've already assigned to a machine
-        
+
         # Get all unique resource names, sorted by length (shorter names first to avoid substring issues)
         all_resources = sorted(clean_df['ResourceName'].unique(), key=len)
-        
+
         # Identify potential main machines (resources that don't look like related resources)
         main_machines = []
         for resource in all_resources:
             # Skip if this looks like a related resource (contains typical suffixes)
-            if any(suffix in resource.lower() for suffix in ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot-']):
+            if any(suffix in resource.lower() for suffix in
+                   ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot-']):
                 continue
             main_machines.append(resource)
-        
+
         # Process each main machine and find its related resources
         for machine_name in main_machines:
             if machine_name in processed_resources:
                 continue
-                
+
             # Start with exact match for the machine itself
             machine_resources = [machine_name]
             processed_resources.add(machine_name)
-            
+
             # Look for related resources using more precise matching
             for resource in all_resources:
                 if resource in processed_resources:
                     continue
-                    
+
                 # Check if this resource is related to the current machine
                 # Use more precise matching to avoid substring issues
                 is_related = False
-                
+
                 # Pattern 1: resource starts with machine name + separator
-                if (resource.startswith(machine_name + '-') or 
-                    resource.startswith(machine_name + '_')):
+                if (resource.startswith(machine_name + '-') or
+                        resource.startswith(machine_name + '_')):
                     is_related = True
-                
+
                 # Pattern 2: resource contains machine name but ensure it's a word boundary
                 # Only match if machine_name appears as a complete word/segment
                 elif machine_name in resource:
@@ -373,16 +375,16 @@ class AzureInvoiceData:
                     pattern = r'\b' + re.escape(machine_name) + r'[\-_]'
                     if re.search(pattern, resource, re.IGNORECASE):
                         is_related = True
-                
+
                 if is_related:
                     machine_resources.append(resource)
                     processed_resources.add(resource)
-            
+
             # Calculate total cost for this machine and its related resources
             machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
             if not machine_data.empty:
                 machine_costs[machine_name] = machine_data['Cost'].sum()
-        
+
         # Handle any remaining unprocessed resources as standalone machines
         for resource in all_resources:
             if resource not in processed_resources:
@@ -392,7 +394,7 @@ class AzureInvoiceData:
 
         return machine_costs
 
-    def get_cost_by_machine(self, include_related: bool=True) -> pd.Series:
+    def get_cost_by_machine(self, include_related: bool = True) -> pd.Series:
         """Calculate total cost grouped by ResourceName (machine)."""
         machine_costs = self._get_unified_machine_costs(include_related=include_related)
         if not machine_costs:
@@ -400,7 +402,7 @@ class AzureInvoiceData:
 
         return pd.Series(machine_costs).sort_values(ascending=False)
 
-    def get_efficiency_metrics(self, include_related: bool=True) -> pd.DataFrame:
+    def get_efficiency_metrics(self, include_related: bool = True) -> pd.DataFrame:
         """Calculate efficiency metrics (cost per unit) using unified machine calculation logic."""
         if self.df is None or self.df.empty:
             return pd.DataFrame()
@@ -428,52 +430,53 @@ class AzureInvoiceData:
             # Use the exact same logic as cost calculation to ensure consistency
             processed_resources = set()
             all_resources = sorted(clean_df['ResourceName'].unique(), key=len)
-            
+
             # Identify potential main machines (same logic as cost calculation)
             main_machines = []
             for resource in all_resources:
-                if any(suffix in resource.lower() for suffix in ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot-']):
+                if any(suffix in resource.lower() for suffix in
+                       ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot-']):
                     continue
                 main_machines.append(resource)
-            
+
             # Process each main machine and find its related resources (same logic as cost calculation)
             for machine_name in main_machines:
                 if machine_name in processed_resources:
                     continue
-                    
+
                 # Start with exact match for the machine itself
                 machine_resources = [machine_name]
                 processed_resources.add(machine_name)
-                
+
                 # Look for related resources using the same precise matching as cost calculation
                 for resource in all_resources:
                     if resource in processed_resources:
                         continue
-                        
+
                     # Use the same matching logic as cost calculation
                     is_related = False
-                    
+
                     # Pattern 1: resource starts with machine name + separator
-                    if (resource.startswith(machine_name + '-') or 
-                        resource.startswith(machine_name + '_')):
+                    if (resource.startswith(machine_name + '-') or
+                            resource.startswith(machine_name + '_')):
                         is_related = True
-                    
+
                     # Pattern 2: resource contains machine name but ensure it's a word boundary
                     elif machine_name in resource:
                         import re
                         pattern = r'\b' + re.escape(machine_name) + r'[\-_]'
                         if re.search(pattern, resource, re.IGNORECASE):
                             is_related = True
-                    
+
                     if is_related:
                         machine_resources.append(resource)
                         processed_resources.add(resource)
-                
+
                 # Calculate total quantity for this machine and its related resources
                 machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
                 if not machine_data.empty:
                     machine_quantities[machine_name] = machine_data['Quantity'].sum()
-            
+
             # Handle any remaining unprocessed resources as standalone machines
             for resource in all_resources:
                 if resource not in processed_resources:
@@ -576,9 +579,9 @@ class AzureInvoiceData:
                        ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot']):
                 # Check if this machine or its related resources are in this resource group
                 machine_related = rg_data[
-                    (rg_data['ResourceName'] == machine_name) | 
-                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
-                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
+                    (rg_data['ResourceName'] == machine_name) |
+                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) |
+                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) |
                     (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
                     ]
                 if not machine_related.empty:
@@ -696,22 +699,22 @@ class AzureInvoiceData:
 
         # Use the same precise resource matching logic as _get_unified_machine_costs
         machine_resources = [resource_name]  # Start with the exact machine name
-        
+
         # Look for related resources using precise matching to avoid substring issues
         all_resources = df_classified['ResourceName'].unique()
-        
+
         for resource in all_resources:
             if resource == resource_name:
                 continue  # Already included
-                
+
             # Use the same matching logic as _get_unified_machine_costs
             is_related = False
-            
+
             # Pattern 1: resource starts with machine name + separator
-            if (resource.startswith(resource_name + '-') or 
-                resource.startswith(resource_name + '_')):
+            if (resource.startswith(resource_name + '-') or
+                    resource.startswith(resource_name + '_')):
                 is_related = True
-            
+
             # Pattern 2: resource contains machine name but ensure it's a word boundary
             elif resource_name in resource:
                 import re
@@ -719,7 +722,7 @@ class AzureInvoiceData:
                 pattern = r'\b' + re.escape(resource_name) + r'[\-_]'
                 if re.search(pattern, resource, re.IGNORECASE):
                     is_related = True
-            
+
             if is_related:
                 machine_resources.append(resource)
 
@@ -761,7 +764,7 @@ class AzureInvoiceData:
 
         return sorted(resource_groups)
 
-    def get_efficiency_resource_breakdown(self, include_related: bool=True) -> pd.DataFrame:
+    def get_efficiency_resource_breakdown(self, include_related: bool = True) -> pd.DataFrame:
         """Get detailed breakdown of efficiency metrics by resource group and machine."""
         if self.df is None or self.df.empty:
             return pd.DataFrame()
@@ -799,8 +802,8 @@ class AzureInvoiceData:
                 # Also look for related resources - use string version for pattern matching
                 try:
                     related_data = clean_df[
-                        (clean_df['ResourceName'].str.contains(resource_name_str, case=False, na=False)) | 
-                        (clean_df['ResourceName'].str.startswith(resource_name_str + '-', na=False)) | 
+                        (clean_df['ResourceName'].str.contains(resource_name_str, case=False, na=False)) |
+                        (clean_df['ResourceName'].str.startswith(resource_name_str + '-', na=False)) |
                         (clean_df['ResourceName'].str.startswith(resource_name_str + '_', na=False))
                         ]
                 except (TypeError, ValueError):
@@ -1056,31 +1059,31 @@ class AzureInvoiceData:
         """Debug method to compare different calculation methods for a specific machine."""
         try:
             debug_info = {}
-            
+
             # 1. Get from resource group table calculation
             machines_by_rg = self.get_machines_by_resource_group(resource_group)
             table_cost = 0
             if not machines_by_rg.empty and machine_name in machines_by_rg['ResourceName'].values:
                 table_cost = machines_by_rg[machines_by_rg['ResourceName'] == machine_name]['Cost'].iloc[0]
-            
+
             # 2. Get from breakdown calculation
             breakdown = self.get_machine_cost_breakdown(machine_name)
             breakdown_cost = breakdown['Cost'].sum() if not breakdown.empty else 0
-            
+
             # 3. Get from cost by machine (with related)
             cost_by_machine = self.get_cost_by_machine(include_related=True)
             cost_by_machine_value = cost_by_machine.get(machine_name, 0)
-            
+
             # 4. Get from cost by machine (simple/exact match only)
             cost_by_machine_simple = self.get_cost_by_machine(include_related=False)
             cost_by_machine_simple_value = cost_by_machine_simple.get(machine_name, 0)
-            
+
             # 5. Get from efficiency metrics
             efficiency_data = self.get_efficiency_metrics(include_related=True)
             efficiency_cost = 0
             if not efficiency_data.empty and machine_name in efficiency_data.index:
                 efficiency_cost = efficiency_data.loc[machine_name, 'Cost']
-            
+
             # Collect all totals
             totals = {
                 'table': table_cost,
@@ -1089,18 +1092,18 @@ class AzureInvoiceData:
                 'cost_by_machine_simple': cost_by_machine_simple_value,
                 'efficiency': efficiency_cost
             }
-            
+
             # Check if all match (within small tolerance)
             all_values = [v for v in totals.values() if v > 0]
             max_diff = max(all_values) - min(all_values) if len(all_values) > 1 else 0
             all_match = max_diff < 0.01
-            
+
             debug_info.update({
                 'totals_summary': totals,
                 'max_difference': max_diff,
                 'all_match': all_match
             })
-            
+
             # Get breakdown details
             if not breakdown.empty:
                 breakdown_details = []
@@ -1112,25 +1115,25 @@ class AzureInvoiceData:
                         'Service': row['ConsumedService']
                     })
                 debug_info['breakdown_by_category'] = breakdown_details
-            
+
             # Get related resources details
             if self.cost_analyzer:
                 df_to_use = self.cost_analyzer.classify_costs()
             else:
                 df_to_use = self.df.copy()
-            
+
             # Find related resources
             machine_name_str = str(machine_name)
             try:
                 related_mask = (
-                    (df_to_use['ResourceName'].str.contains(machine_name_str, case=False, na=False)) | 
-                    (df_to_use['ResourceName'].str.startswith(machine_name_str + '-', na=False)) | 
-                    (df_to_use['ResourceName'].str.startswith(machine_name_str + '_', na=False))
+                        (df_to_use['ResourceName'].str.contains(machine_name_str, case=False, na=False)) |
+                        (df_to_use['ResourceName'].str.startswith(machine_name_str + '-', na=False)) |
+                        (df_to_use['ResourceName'].str.startswith(machine_name_str + '_', na=False))
                 )
                 related_data = df_to_use[related_mask]
             except (TypeError, ValueError):
                 related_data = df_to_use[df_to_use['ResourceName'] == machine_name]
-            
+
             if not related_data.empty:
                 related_details = []
                 for _, row in related_data.iterrows():
@@ -1142,9 +1145,9 @@ class AzureInvoiceData:
                     })
                 debug_info['related_resources'] = related_details
                 debug_info['related_resources_total'] = related_data['Cost'].sum()
-            
+
             return debug_info
-            
+
         except Exception as e:
             return {'error': str(e), 'totals_summary': {}, 'max_difference': 0, 'all_match': False}
 
@@ -1155,7 +1158,7 @@ class StreamlitChartCreator:
     def __init__(self):
         pass
 
-    def format_label(self, label: str, max_length: int=40) -> str:
+    def format_label(self, label: str, max_length: int = 40) -> str:
         """Format label to specified length, padding with spaces if needed."""
         if len(label) <= max_length:
             return label.ljust(max_length)
@@ -1621,7 +1624,7 @@ class StreamlitChartCreator:
 
         return fig
 
-    def create_top_machines_chart(self, cost_data: pd.Series, top_items: int=10) -> go.Figure:
+    def create_top_machines_chart(self, cost_data: pd.Series, top_items: int = 10) -> go.Figure:
         """Create interactive bar chart for top machines by cost."""
         if cost_data.empty:
             return go.Figure()
@@ -1658,7 +1661,8 @@ class StreamlitChartCreator:
 
         return fig
 
-    def create_resource_group_breakdown_chart(self, cost_data: pd.DataFrame, resource_group: str, top_items: int=10) -> go.Figure:
+    def create_resource_group_breakdown_chart(self, cost_data: pd.DataFrame, resource_group: str,
+                                              top_items: int = 10) -> go.Figure:
         """Create chart for a specific resource group."""
         sub_df = cost_data[cost_data['ResourceGroup'] == resource_group].head(top_items)
         if sub_df.empty:
@@ -1764,12 +1768,12 @@ class StreamlitChartCreator:
             paper_bgcolor='white'
         )
 
-        return fig 
+        return fig
 
 
 class ComplexDashboard:
     """Complex Azure invoice dashboard with advanced analysis features."""
-    
+
     def __init__(self):
         self.chart_creator = StreamlitChartCreator()
         # Configuration Constants - Fixed values for consistent display
@@ -1799,10 +1803,11 @@ class ComplexDashboard:
         st.header("📈 Executive Summary & Validation")
 
         # Add data integrity check section
-        if summary.get('duplicate_records', 0) > 0 or summary.get('negative_costs', 0) > 0 or summary.get('rows_with_nan_rg', 0) > 0:
+        if summary.get('duplicate_records', 0) > 0 or summary.get('negative_costs', 0) > 0 or summary.get(
+                'rows_with_nan_rg', 0) > 0:
             with st.expander("⚠️ **Data Integrity Warnings**", expanded=True):
                 col1, col2, col3, col4 = st.columns(4)
-                
+
                 with col1:
                     duplicates = summary.get('duplicate_records', 0)
                     if duplicates > 0:
@@ -1810,7 +1815,7 @@ class ComplexDashboard:
                         st.caption("May cause inflated costs")
                     else:
                         st.success("**No Duplicates** ✓")
-                
+
                 with col2:
                     negative = summary.get('negative_costs', 0)
                     if negative > 0:
@@ -1818,7 +1823,7 @@ class ComplexDashboard:
                         st.caption("Check for credits/refunds")
                     else:
                         st.success("**No Negative Costs** ✓")
-                
+
                 with col3:
                     nan_rg = summary.get('rows_with_nan_rg', 0)
                     if nan_rg > 0:
@@ -1826,13 +1831,13 @@ class ComplexDashboard:
                         st.caption("Not included in RG analysis")
                     else:
                         st.success("**All RGs Present** ✓")
-                
+
                 with col4:
                     max_cost = summary.get('max_single_cost', 0)
                     total_cost = summary.get('total_cost', 1)
                     if max_cost > total_cost * 0.3:
                         st.warning(f"**Max Single Cost:** ${max_cost:,.2f}")
-                        st.caption(f"{(max_cost/total_cost*100):.1f}% of total")
+                        st.caption(f"{(max_cost / total_cost * 100):.1f}% of total")
                     else:
                         st.success("**Normal Cost Distribution** ✓")
 
@@ -2143,7 +2148,7 @@ class ComplexDashboard:
             # Categorize resources
             efficient_resources = efficiency_data[efficiency_data['EfficiencyScore'] <= efficiency_median]
             above_avg_resources = efficiency_data[
-                (efficiency_data['EfficiencyScore'] > efficiency_median) & 
+                (efficiency_data['EfficiencyScore'] > efficiency_median) &
                 (efficiency_data['EfficiencyScore'] <= avg_efficiency * 1.5)
                 ]
             high_cost_resources = efficiency_data[efficiency_data['EfficiencyScore'] > avg_efficiency * 1.5]
@@ -2784,45 +2789,48 @@ class ComplexDashboard:
         # Add debug information section
         with st.expander("🔍 **Resource Group Calculation Details**", expanded=False):
             total_invoice = data.df['Cost'].sum()
-            
+
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Total Invoice Cost", f"${total_invoice:,.2f}")
                 st.caption("Sum of all Cost values")
-            
+
             with col2:
                 rg_total = cost_by_rg.sum()
                 st.metric("Sum of RG Costs", f"${rg_total:,.2f}")
                 st.caption("After grouping by RG")
-            
+
             with col3:
                 nan_cost = data.df[data.df['ResourceGroup'].isna()]['Cost'].sum()
                 st.metric("NaN RG Costs", f"${nan_cost:,.2f}")
                 st.caption("Rows without RG")
-            
+
             # Show top resource groups with validation
             st.markdown("**Top 5 Resource Groups:**")
             if not cost_by_rg.empty:
                 debug_df = pd.DataFrame({
                     'Resource Group': cost_by_rg.head(5).index,
                     'Cost': [f"${x:,.2f}" for x in cost_by_rg.head(5).values],
-                    '% of Total': [f"{(x/total_invoice*100):.1f}%" for x in cost_by_rg.head(5).values],
-                    'Status': ['✅ Normal' if x <= total_invoice else '❌ ERROR - Exceeds Total!' for x in cost_by_rg.head(5).values]
+                    '% of Total': [f"{(x / total_invoice * 100):.1f}%" for x in cost_by_rg.head(5).values],
+                    'Status': ['✅ Normal' if x <= total_invoice else '❌ ERROR - Exceeds Total!' for x in
+                               cost_by_rg.head(5).values]
                 })
                 st.dataframe(debug_df, use_container_width=True, hide_index=True)
-                
+
                 # Check for any impossible values
                 max_rg_cost = cost_by_rg.max()
                 max_rg_name = cost_by_rg.idxmax()
-                
+
                 if max_rg_cost > total_invoice:
-                    st.error(f"🚨 **CRITICAL ERROR**: Resource group '{max_rg_name}' shows ${max_rg_cost:,.2f} which exceeds total invoice ${total_invoice:,.2f}")
-                    st.error("This indicates a serious data calculation issue. Please use the Force Refresh button in the sidebar.")
-            
+                    st.error(
+                        f"🚨 **CRITICAL ERROR**: Resource group '{max_rg_name}' shows ${max_rg_cost:,.2f} which exceeds total invoice ${total_invoice:,.2f}")
+                    st.error(
+                        "This indicates a serious data calculation issue. Please use the Force Refresh button in the sidebar.")
+
             # Validation check
             expected_total = rg_total + nan_cost
             diff = abs(total_invoice - expected_total)
-            
+
             if diff < 0.01:
                 st.success(f"✅ Costs reconcile correctly (difference: ${diff:,.2f})")
             else:

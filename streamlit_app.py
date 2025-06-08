@@ -1,6 +1,5 @@
-import streamlit as st
 import pandas as pd
-from typing import Optional
+import streamlit as st
 
 # Import specialized analysis modules
 from complex_analysis import AzureInvoiceData, ComplexDashboard
@@ -44,11 +43,11 @@ st.markdown("""
 
 class MainDashboard:
     """Main dashboard that handles template selection and file upload."""
-    
+
     def __init__(self):
         self.complex_dashboard = ComplexDashboard()
         self.simple_dashboard = SimpleDashboard()
-    
+
     def display_header(self):
         """Display the main application header."""
         st.markdown("""
@@ -57,11 +56,11 @@ class MainDashboard:
             <p>Comprehensive Azure cost analysis with advanced insights</p>
         </div>
         """, unsafe_allow_html=True)
-    
+
     def display_template_selection(self):
         """Display template selection and return selected template."""
         st.markdown("### 🎯 **Choose Analysis Template**")
-        
+
         template = st.radio(
             "**Select Template:**",
             options=["Complex (Advanced Azure Invoice)", "Simple (Basic Service Usage)"],
@@ -69,10 +68,10 @@ class MainDashboard:
             horizontal=True,
             help="Choose the analysis template that matches your CSV format"
         )
-        
+
         st.markdown('</div>', unsafe_allow_html=True)
         return template
-    
+
     def display_file_upload(self, template: str):
         """Display file upload section and return uploaded data."""
         uploaded_file = st.file_uploader(
@@ -80,7 +79,6 @@ class MainDashboard:
             type="csv",
             help="Upload your Azure invoice CSV file for analysis"
         )
-
 
         if "Complex" in template:
             st.info("""
@@ -94,58 +92,57 @@ class MainDashboard:
             SubscriptionName, SubscriptionGuid, Date, ResourceGuid, ServiceName, 
             ServiceType, ServiceRegion, ServiceResource, Quantity, Cost
             """)
-        
 
         if uploaded_file is not None:
             try:
                 with st.spinner("🔄 Loading and processing CSV file..."):
                     # Load the CSV
                     df = pd.read_csv(uploaded_file, low_memory=False)
-                    
+
                     # Convert Date column 
                     if 'Date' in df.columns:
                         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-                    
+
                     st.success(f"✅ File loaded successfully! {len(df):,} records found.")
-                    
+
                     # Validate columns based on template
                     if "Complex" in template:
                         required_cols = ['Date', 'SubscriptionName', 'ResourceGroup', 'Cost', 'Quantity']
                         missing_cols = [col for col in required_cols if col not in df.columns]
-                        
+
                         if missing_cols:
                             st.error(f"❌ Missing required columns for Complex template: {missing_cols}")
                             st.info("💡 Try using the Simple template or check your CSV format.")
                             return None
-                        
+
                         # Create complex data object
                         return AzureInvoiceData(df)
-                    
+
                     else:  # Simple template
                         required_cols = ['SubscriptionName', 'Date', 'ServiceName', 'Cost', 'Quantity']
                         missing_cols = [col for col in required_cols if col not in df.columns]
-                        
+
                         if missing_cols:
                             st.error(f"❌ Missing required columns for Simple template: {missing_cols}")
                             st.info("💡 Try using the Complex template or check your CSV format.")
                             return None
-                        
+
                         # Create simple data object
                         return SimpleInvoiceData(df)
-                        
+
             except Exception as e:
                 st.error(f"❌ Error loading file: {str(e)}")
                 st.info("💡 Please check that your file is a valid CSV format.")
                 return None
-        
+
         return None
-    
+
     def display_welcome_message(self):
         """Display welcome message when no file is uploaded."""
         st.markdown("### 👋 Welcome to Azure Invoice Analyzer!")
-        
+
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.markdown("""
             **🎯 What This Tool Does:**
@@ -155,7 +152,7 @@ class MainDashboard:
             - ⚡ Calculates efficiency metrics
             - 📈 Creates interactive visualizations
             """)
-        
+
         with col2:
             st.markdown("""
             **🚀 How to Get Started:**
@@ -164,9 +161,9 @@ class MainDashboard:
             3. Explore the generated insights
             4. Export or share your analysis
             """)
-        
+
         st.markdown("---")
-        
+
         # Sample data info
         with st.expander("📋 **Sample Data Format**", expanded=False):
             st.markdown("""
@@ -182,25 +179,25 @@ class MainDashboard:
             MySubscription,2024-01-01,Virtual Machines,Compute,East US,VM-001,24,100.50
             ```
             """)
-    
+
     def run(self):
         """Main application entry point."""
         # Display header
         self.display_header()
-        
+
         # Template selection
         template = self.display_template_selection()
-        
+
         # File upload and processing
         data = self.display_file_upload(template)
-        
+
         if data is not None:
-            
+
             # Route to appropriate dashboard based on template
             if "Complex" in template:
                 # Complex analysis pipeline
                 st.info("🔧 **Complex Template Active** - Advanced Azure invoice analysis")
-                
+
                 # Run complex analysis
                 with st.container():
                     # Enhanced summary
@@ -233,13 +230,14 @@ class MainDashboard:
 
                     # Detailed tables
                     self.complex_dashboard.display_detailed_tables(data)
-                    
-                    st.success("✅ Complex analysis complete! All cost categories, efficiency metrics, and resource breakdowns calculated.")
-            
+
+                    st.success(
+                        "✅ Complex analysis complete! All cost categories, efficiency metrics, and resource breakdowns calculated.")
+
             else:
                 # Simple analysis pipeline
                 self.simple_dashboard.run_simple_analysis(data)
-        
+
         else:
             # Show welcome message
             self.display_welcome_message()
