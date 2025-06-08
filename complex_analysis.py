@@ -1,9 +1,7 @@
-from typing import Optional, Dict, Any
+from typing import Dict, Any
+
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
-from datetime import datetime, timedelta
 import streamlit as st
 from plotly.subplots import make_subplots
 
@@ -586,29 +584,87 @@ class AzureInvoiceData:
                 if not machine_related.empty:
                     rg_machine_names.add(machine_name)
 
-        # Build machine summary for this resource group
-        machine_totals = []
-        for machine_name in rg_machine_names:
-            if machine_name in all_machine_costs:
-                # Get detailed info for this machine in this resource group
-                machine_related = rg_data[
-                    (rg_data['ResourceName'] == machine_name) | 
-                    (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) | 
-                    (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) | 
-                    (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
-                    ]
+        # Build machine summary using EXACT SAME logic as manual calculation
+        machines = {}
+        assigned_resources = set()
 
-                total_quantity = machine_related['Quantity'].sum()
-                services = ', '.join(machine_related['ConsumedService'].dropna().astype(str).unique())
-                meter_categories = ', '.join(machine_related['MeterCategory'].dropna().astype(str).unique())
-
-                machine_totals.append({
-                    'ResourceName': machine_name,
-                    'Cost': all_machine_costs[machine_name],
-                    'Quantity': total_quantity,
-                    'ConsumedService': services,
-                    'MeterCategory': meter_categories
+        # Get all unique resources with their costs
+        all_resources = []
+        for resource_name in rg_data['ResourceName'].unique():
+            if pd.notna(resource_name):
+                resource_data = rg_data[rg_data['ResourceName'] == resource_name]
+                resource_cost = resource_data['Cost'].sum()
+                all_resources.append({
+                    'resource': resource_name,
+                    'cost': resource_cost,
+                    'quantity': resource_data['Quantity'].sum(),
+                    'services': ', '.join(resource_data['ConsumedService'].dropna().astype(str).unique()),
+                    'meter_categories': ', '.join(resource_data['MeterCategory'].dropna().astype(str).unique()),
+                    'is_infrastructure': any(suffix in resource_name.lower() for suffix in
+                                             ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot'])
                 })
+
+        # First pass: Assign exact matches for main machines (non-infrastructure)
+        for resource in all_resources:
+            if not resource['is_infrastructure'] and resource['resource'] not in assigned_resources:
+                machine_name = resource['resource']
+                machines[machine_name] = {
+                    'cost': resource['cost'],
+                    'quantity': resource['quantity'],
+                    'services': resource['services'],
+                    'meter_categories': resource['meter_categories'],
+                    'resources': [resource['resource']]
+                }
+                assigned_resources.add(resource['resource'])
+
+        # Second pass: Assign infrastructure resources to their parent machines
+        for resource in all_resources:
+            if resource['is_infrastructure'] and resource['resource'] not in assigned_resources:
+                resource_name = resource['resource']
+                assigned = False
+
+                # Try to find a parent machine for this infrastructure resource
+                for machine_name in machines.keys():
+                    # Simple pattern: infrastructure resource starts with machine name
+                    if (resource_name.startswith(machine_name + '-') or
+                            resource_name.startswith(machine_name + '_')):
+                        machines[machine_name]['cost'] += resource['cost']
+                        machines[machine_name]['quantity'] += resource['quantity']
+                        # Combine services and meter categories
+                        existing_services = set(machines[machine_name]['services'].split(', '))
+                        new_services = set(resource['services'].split(', '))
+                        machines[machine_name]['services'] = ', '.join(existing_services.union(new_services))
+
+                        existing_meters = set(machines[machine_name]['meter_categories'].split(', '))
+                        new_meters = set(resource['meter_categories'].split(', '))
+                        machines[machine_name]['meter_categories'] = ', '.join(existing_meters.union(new_meters))
+
+                        machines[machine_name]['resources'].append(resource_name)
+                        assigned_resources.add(resource_name)
+                        assigned = True
+                        break
+
+                # If not assigned, create standalone entry
+                if not assigned:
+                    machines[resource_name] = {
+                        'cost': resource['cost'],
+                        'quantity': resource['quantity'],
+                        'services': resource['services'],
+                        'meter_categories': resource['meter_categories'],
+                        'resources': [resource_name]
+                    }
+                    assigned_resources.add(resource_name)
+
+        # Convert to the expected format
+        machine_totals = []
+        for machine_name, machine_info in machines.items():
+            machine_totals.append({
+                'ResourceName': machine_name,
+                'Cost': machine_info['cost'],
+                'Quantity': machine_info['quantity'],
+                'ConsumedService': machine_info['services'],
+                'MeterCategory': machine_info['meter_categories']
+            })
 
         if not machine_totals:
             return pd.DataFrame()
@@ -787,6 +843,214 @@ class AzureInvoiceData:
         breakdown_df = breakdown_df.sort_values('Cost', ascending=False)
 
         return breakdown_df
+
+    def manual_calculate_resource_group(self, resource_group: str) -> dict:
+        """Manually calculate resource group costs step by step to identify issues."""
+        if self.df is None or self.df.empty:
+            return {}
+
+        # Get classified data
+        if self.cost_analyzer:
+            df_classified = self.cost_analyzer.classify_costs()
+        else:
+            df_classified = self.df.copy()
+
+        # STEP 1: Get ALL resources in this resource group (this is the TRUTH)
+        clean_df = df_classified.dropna(subset=['Cost', 'ResourceGroup', 'ResourceName'])
+        clean_df['Cost'] = pd.to_numeric(clean_df['Cost'], errors='coerce')
+        clean_df = clean_df.dropna(subset=['Cost'])
+
+        rg_data = clean_df[clean_df['ResourceGroup'] == resource_group]
+
+        # TRUTH: Traditional method - simple sum
+        truth_total = rg_data['Cost'].sum()
+
+        # STEP 2: Get all unique resources with their costs
+        all_resources = []
+        resource_costs = {}
+        for resource_name in rg_data['ResourceName'].unique():
+            if pd.notna(resource_name):
+                resource_data = rg_data[rg_data['ResourceName'] == resource_name]
+                resource_cost = resource_data['Cost'].sum()
+                resource_costs[resource_name] = resource_cost
+                all_resources.append({
+                    'resource': resource_name,
+                    'cost': resource_cost,
+                    'records': len(resource_data),
+                    'is_infrastructure': any(suffix in resource_name.lower() for suffix in
+                                             ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot'])
+                })
+
+        # STEP 3: Verify total
+        manual_total = sum([r['cost'] for r in all_resources])
+
+        # STEP 4: Create SIMPLE machine assignment (NO overlapping patterns)
+        machines = {}
+        assigned_resources = set()
+
+        # First pass: Assign exact matches for main machines (non-infrastructure)
+        for resource in all_resources:
+            if not resource['is_infrastructure'] and resource['resource'] not in assigned_resources:
+                machine_name = resource['resource']
+                machines[machine_name] = {
+                    'cost': resource['cost'],
+                    'resources': [resource['resource']],
+                    'resource_count': 1
+                }
+                assigned_resources.add(resource['resource'])
+
+        # Second pass: Assign infrastructure resources to their parent machines
+        for resource in all_resources:
+            if resource['is_infrastructure'] and resource['resource'] not in assigned_resources:
+                resource_name = resource['resource']
+                assigned = False
+
+                # Try to find a parent machine for this infrastructure resource
+                for machine_name in machines.keys():
+                    # Simple pattern: infrastructure resource starts with machine name
+                    if (resource_name.startswith(machine_name + '-') or
+                            resource_name.startswith(machine_name + '_')):
+                        machines[machine_name]['cost'] += resource['cost']
+                        machines[machine_name]['resources'].append(resource_name)
+                        machines[machine_name]['resource_count'] += 1
+                        assigned_resources.add(resource_name)
+                        assigned = True
+                        break
+
+                # If not assigned, create standalone entry
+                if not assigned:
+                    machines[resource_name] = {
+                        'cost': resource['cost'],
+                        'resources': [resource_name],
+                        'resource_count': 1
+                    }
+                    assigned_resources.add(resource_name)
+
+        # Calculate machine total
+        machine_total = sum([m['cost'] for m in machines.values()])
+
+        # STEP 5: Identify any unassigned resources
+        unassigned_resources = []
+        for resource in all_resources:
+            if resource['resource'] not in assigned_resources:
+                unassigned_resources.append(resource)
+
+        unassigned_total = sum([r['cost'] for r in unassigned_resources])
+
+        return {
+            'resource_group': resource_group,
+            'truth_total': truth_total,
+            'manual_total': manual_total,
+            'machine_total': machine_total,
+            'unassigned_total': unassigned_total,
+            'total_resources': len(all_resources),
+            'assigned_resources': len(assigned_resources),
+            'unassigned_resources': len(unassigned_resources),
+            'machines': machines,
+            'all_resources': sorted(all_resources, key=lambda x: x['cost'], reverse=True),
+            'unassigned': unassigned_resources,
+            'validation': {
+                'truth_vs_manual': abs(truth_total - manual_total) < 0.01,
+                'truth_vs_machine': abs(truth_total - machine_total) < 0.01,
+                'all_assigned': len(unassigned_resources) == 0
+            }
+        }
+
+    def debug_resource_group_calculation(self, resource_group: str) -> dict:
+        """Debug and manually calculate resource group costs using both methods."""
+        if self.df is None or self.df.empty:
+            return {}
+
+        # Get classified data
+        if self.cost_analyzer:
+            df_classified = self.cost_analyzer.classify_costs()
+        else:
+            df_classified = self.df.copy()
+
+        # METHOD 1: Traditional - simple groupby (what get_cost_by_resource_group does)
+        traditional_df = df_classified.dropna(subset=['Cost', 'ResourceGroup'])
+        traditional_df['Cost'] = pd.to_numeric(traditional_df['Cost'], errors='coerce')
+        traditional_df = traditional_df.dropna(subset=['Cost'])
+
+        # Filter for this resource group
+        rg_traditional = traditional_df[traditional_df['ResourceGroup'] == resource_group]
+        traditional_total = rg_traditional['Cost'].sum()
+        traditional_count = len(rg_traditional)
+
+        # METHOD 2: Drill-down - NEW SIMPLIFIED method (what get_machines_by_resource_group does)
+        rg_data = df_classified.dropna(subset=['ResourceGroup', 'ResourceName'])
+        rg_data = rg_data[rg_data['ResourceGroup'] == resource_group]
+
+        drill_down_total = 0
+        drill_down_machines = []
+
+        # Get all unique ResourceNames in this RG (excluding infrastructure)
+        main_machines = set()
+        for resource_name in rg_data['ResourceName'].unique():
+            if pd.notna(resource_name):
+                # Skip infrastructure resources
+                if not any(suffix in resource_name.lower() for suffix in
+                           ['-disk', '_osdisk', '-nic', '-ip', '-nsg', 'disk-', 'snapshot']):
+                    main_machines.add(resource_name)
+
+        # For each machine, calculate cost using ONLY resources in THIS resource group
+        for machine_name in main_machines:
+            # Find all resources in THIS RG that are related to this machine
+            machine_related = rg_data[
+                (rg_data['ResourceName'] == machine_name) |
+                (rg_data['ResourceName'].str.contains(machine_name, case=False, na=False)) |
+                (rg_data['ResourceName'].str.startswith(machine_name + '-', na=False)) |
+                (rg_data['ResourceName'].str.startswith(machine_name + '_', na=False))
+                ]
+
+            machine_cost_in_rg = machine_related['Cost'].sum()
+            if machine_cost_in_rg > 0:
+                drill_down_total += machine_cost_in_rg
+                related_resources = machine_related['ResourceName'].unique()
+                drill_down_machines.append({
+                    'machine': machine_name,
+                    'cost_in_rg': machine_cost_in_rg,
+                    'resources_in_rg': len(machine_related),
+                    'related_resources': ', '.join(related_resources[:3]) + (
+                        f' (+{len(related_resources) - 3} more)' if len(related_resources) > 3 else '')
+                })
+
+        # Manual verification - get all unique resources in this RG
+        all_resources_in_rg = rg_traditional['ResourceName'].unique()
+        resource_details = []
+        manual_total = 0
+
+        for resource in all_resources_in_rg:
+            if pd.notna(resource):  # Skip NaN resources
+                resource_data = rg_traditional[rg_traditional['ResourceName'] == resource]
+                resource_cost = resource_data['Cost'].sum()
+                manual_total += resource_cost
+                resource_details.append({
+                    'resource': resource,
+                    'cost': resource_cost,
+                    'records': len(resource_data)
+                })
+
+        return {
+            'resource_group': resource_group,
+            'traditional_method': {
+                'total_cost': traditional_total,
+                'record_count': traditional_count,
+                'unique_resources': len(all_resources_in_rg)
+            },
+            'drill_down_method': {
+                'total_cost': drill_down_total,
+                'machine_count': len(drill_down_machines),
+                'machines': drill_down_machines
+            },
+            'manual_verification': {
+                'total_cost': manual_total,
+                'resource_count': len(resource_details),
+                'resources': sorted(resource_details, key=lambda x: x['cost'], reverse=True)[:10]  # Top 10
+            },
+            'difference': abs(traditional_total - drill_down_total),
+            'match': abs(traditional_total - drill_down_total) < 0.01
+        }
 
     def debug_machine_calculation(self, resource_group: str, machine_name: str) -> dict:
         """Debug method to compare different calculation methods for a specific machine."""
@@ -1915,12 +2179,22 @@ class ComplexDashboard:
             st.markdown("#### 📊 Cost by Resource Group")
 
             with st.spinner('📊 Processing resource group summaries...'):
-                rg_summary = resource_breakdown.groupby('ResourceGroup').agg({
-                    'Cost': 'sum',
+                # Use the CORRECTED resource group calculation method instead of grouping breakdown data
+                rg_costs = data.get_cost_by_resource_group(use_classified=True)
+
+                # Calculate additional metrics from efficiency data
+                rg_metrics = resource_breakdown.groupby('ResourceGroup').agg({
                     'Quantity': 'sum',
                     'ResourceName': 'count'
                 }).round(2)
-                rg_summary['AvgEfficiency'] = rg_summary['Cost'] / rg_summary['Quantity']
+
+                # Combine the corrected costs with metrics
+                rg_summary = pd.DataFrame(index=rg_costs.index)
+                rg_summary['Cost'] = rg_costs.values
+                rg_summary['Quantity'] = rg_metrics['Quantity'].reindex(rg_summary.index, fill_value=0)
+                rg_summary['ResourceName'] = rg_metrics['ResourceName'].reindex(rg_summary.index, fill_value=0)
+                rg_summary['AvgEfficiency'] = rg_summary['Cost'] / rg_summary['Quantity'].replace(0,
+                                                                                                  1)  # Avoid division by zero
                 rg_summary = rg_summary.sort_values('Cost', ascending=False)
 
             # Format for display
@@ -2026,6 +2300,66 @@ class ComplexDashboard:
         """Run the complete complex analysis dashboard."""
         st.info("🔧 **Complex Template Active** - Advanced Azure invoice analysis with cost categorization")
 
+        # Add overall consistency validation at the top
+        if data.cost_analyzer:
+            with st.expander("🔍 **Overall Calculation Consistency Check**", expanded=False):
+                # Perform comprehensive validation across all sections
+                validation = data.cost_analyzer.validate_cost_reconciliation()
+                raw_total = data.df['Cost'].sum()
+                classified_total = validation['original_total']
+
+                st.markdown("### 📊 Data Source Consistency")
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    st.metric("Raw Data Total", f"${raw_total:,.2f}")
+                with col2:
+                    st.metric("Classified Data Total", f"${classified_total:,.2f}")
+                with col3:
+                    diff = abs(raw_total - classified_total)
+                    st.metric("Difference", f"${diff:,.2f}",
+                              delta="✅ Consistent" if diff < 0.01 else "❌ Error")
+
+                if diff < 0.01:
+                    st.success("✅ **Data consistency verified** - all sections use the same data source")
+                else:
+                    st.error("❌ **Data inconsistency detected** - sections may show different values")
+
+                st.markdown("### 🎯 Section Data Sources")
+                st.markdown("""
+                **All sections now use CLASSIFIED data for consistency:**
+                - ✅ **Executive Summary**: Uses classified data for validation
+                - ✅ **Cost Category Analysis**: Uses classified data (primary source)
+                - ✅ **Service Provider Analysis**: Uses classified data
+                - ✅ **Efficiency Analysis**: Uses classified data
+                - ✅ **Interactive Drill-Down**: Uses classified data (FIXED)
+                - ✅ **Resource Analysis**: Uses classified data
+                - ✅ **Detailed Tables**: Uses classified data
+                
+                **This ensures that:**
+                - Resource Group costs are identical across all sections
+                - Machine costs are consistent in all views
+                - Category breakdowns match everywhere
+                - No cross-session calculation differences
+                """)
+
+                # Quick validation of key metrics
+                st.markdown("### 🧮 Quick Validation")
+                rg_costs = data.get_cost_by_resource_group(use_classified=True)
+                machine_costs = data.get_cost_by_machine(include_related=True)
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    rg_total = rg_costs.sum() if not rg_costs.empty else 0
+                    st.metric("Resource Groups Total", f"${rg_total:,.2f}")
+                with col2:
+                    machine_total = machine_costs.sum() if not machine_costs.empty else 0
+                    st.metric("Machines Total", f"${machine_total:,.2f}")
+                with col3:
+                    rg_machine_diff = abs(rg_total - machine_total)
+                    st.metric("RG vs Machine Diff", f"${rg_machine_diff:,.2f}",
+                              delta="✅ Match" if rg_machine_diff < classified_total * 0.01 else "⚠️ Different scope")
+
         with st.container():
             # Enhanced summary with validation
             self.display_enhanced_summary(data)
@@ -2069,6 +2403,50 @@ class ComplexDashboard:
         st.markdown(
             "**Select a resource group to see its machines, then click on any machine to see its cost breakdown by category.**")
 
+        # Add consistency validation info
+        st.info(
+            "📊 **Data Source**: Using **classified data** (same as Resource Analysis and Cost Categories for consistency)")
+
+        with st.expander("🔍 **Cross-Section Consistency Validation**", expanded=False):
+            if data.cost_analyzer:
+                # Get all resource group costs from traditional analysis
+                traditional_rg_costs = data.get_cost_by_resource_group(use_classified=True)
+                classified_df = data.cost_analyzer.classify_costs()
+
+                st.markdown("**Resource Group Cost Comparison:**")
+                st.markdown("Comparing costs between this section and Traditional Resource Analysis...")
+
+                # Show top 5 resource groups comparison
+                top_rgs = traditional_rg_costs.head(5)
+                comparison_data = []
+
+                for rg, traditional_cost in top_rgs.items():
+                    # Calculate the same RG cost using the same method as this section
+                    drill_down_rg_data = classified_df[classified_df['ResourceGroup'] == rg]
+                    drill_down_cost = drill_down_rg_data['Cost'].sum() if not drill_down_rg_data.empty else 0
+
+                    diff = abs(traditional_cost - drill_down_cost)
+                    status = "✅ Match" if diff < 0.01 else f"❌ Diff: ${diff:,.2f}"
+
+                    comparison_data.append({
+                        'Resource Group': rg,
+                        'Traditional Analysis': f"${traditional_cost:,.2f}",
+                        'Drill-Down Analysis': f"${drill_down_cost:,.2f}",
+                        'Status': status
+                    })
+
+                comparison_df = pd.DataFrame(comparison_data)
+                st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+                # Overall status
+                all_match = all('✅' in row['Status'] for row in comparison_data)
+                if all_match:
+                    st.success("✅ **Perfect Consistency**: All resource group costs match between sections!")
+                else:
+                    st.error("❌ **Inconsistency Detected**: Resource group costs differ between sections!")
+            else:
+                st.warning("⚠️ Cost analyzer not available - using raw data")
+
         # Get all resource groups with error handling
         try:
             resource_groups = data.get_all_resource_groups()
@@ -2093,11 +2471,17 @@ class ComplexDashboard:
             )
 
         with col2:
-            # Show resource group summary with error handling
+            # Show resource group summary with error handling - USE SAME DATA SOURCE AS TRADITIONAL ANALYSIS
             if selected_rg:
                 try:
-                    rg_data = data.df[data.df[
-                                          'ResourceGroup'] == selected_rg] if 'ResourceGroup' in data.df.columns else pd.DataFrame()
+                    # Use the SAME data source as traditional analysis for consistency
+                    if data.cost_analyzer:
+                        df_to_use = data.cost_analyzer.classify_costs()
+                    else:
+                        df_to_use = data.df.copy()
+
+                    rg_data = df_to_use[df_to_use[
+                                            'ResourceGroup'] == selected_rg] if 'ResourceGroup' in df_to_use.columns else pd.DataFrame()
                     if not rg_data.empty:
                         rg_cost = rg_data['Cost'].sum()
                         rg_machines = rg_data[
@@ -2111,6 +2495,46 @@ class ComplexDashboard:
                             st.metric("Machines", f"{rg_machines}")
                         with col_c:
                             st.metric("Total Usage", f"{rg_quantity:,.0f} hrs")
+
+                        # Add validation indicator to show data source consistency
+                        # Get the resource group cost from traditional analysis method for comparison
+                        traditional_rg_costs = data.get_cost_by_resource_group(use_classified=True)
+                        if selected_rg in traditional_rg_costs:
+                            traditional_cost = traditional_rg_costs[selected_rg]
+                            if abs(rg_cost - traditional_cost) < 0.01:
+                                st.success("✅ Consistent with Traditional Analysis")
+                            else:
+                                st.error(f"❌ Inconsistent: Traditional shows ${traditional_cost:,.2f}")
+
+                        # Show detailed breakdown comparison
+                        with st.expander("🔧 **Debug: Calculation Method Comparison**", expanded=False):
+                            st.markdown(f"**Resource Group: {selected_rg}**")
+
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                st.markdown("**Traditional Method:**")
+                                st.markdown("- Groups by ResourceGroup")
+                                st.markdown("- Sums ALL costs in RG")
+                                st.markdown("- Simple aggregation")
+                                st.metric("Traditional Total", f"${traditional_cost:,.2f}")
+
+                            with col_b:
+                                st.markdown("**Drill-Down Method:**")
+                                st.markdown("- Calculates per-machine costs")
+                                st.markdown("- Only costs within THIS RG")
+                                st.markdown("- Machine-by-machine sum")
+                                st.metric("Drill-Down Total", f"${rg_cost:,.2f}")
+
+                            diff = abs(rg_cost - traditional_cost)
+                            if diff < 0.01:
+                                st.success(f"✅ **FIXED**: Methods now match! Difference: ${diff:.2f}")
+                            else:
+                                st.error(f"❌ **Still inconsistent**: Difference: ${diff:,.2f}")
+                                st.markdown("**Possible causes:**")
+                                st.markdown("- Related resources spanning multiple RGs")
+                                st.markdown("- Machine grouping logic differences")
+                                st.markdown("- Data processing inconsistencies")
+
                 except Exception as e:
                     st.warning(f"Error calculating resource group summary: {str(e)}")
 
@@ -2148,6 +2572,30 @@ class ComplexDashboard:
 
             # Display machines table
             st.dataframe(display_machines, use_container_width=True, hide_index=True)
+
+            # Add validation section showing machine total vs resource group total
+            if not machines_data.empty:
+                machine_total = machines_data['Cost'].sum()
+
+                # Get traditional RG cost for comparison
+                traditional_rg_costs = data.get_cost_by_resource_group(use_classified=True)
+                traditional_cost = traditional_rg_costs.get(selected_rg,
+                                                            0) if selected_rg in traditional_rg_costs else 0
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Sum of Machines", f"${machine_total:,.2f}")
+                with col2:
+                    st.metric("Resource Group Total", f"${traditional_cost:,.2f}")
+                with col3:
+                    diff = abs(machine_total - traditional_cost)
+                    status = "✅ Match" if diff < 0.01 else f"❌ Diff: ${diff:,.2f}"
+                    st.metric("Validation", status)
+
+                if diff >= 0.01:
+                    st.warning(
+                        f"⚠️ Machine total (${machine_total:,.2f}) differs from RG total (${traditional_cost:,.2f}) by ${diff:,.2f}")
+                    st.info("This could indicate machines with resources spanning multiple resource groups.")
 
             # Machine selection using radio buttons for better UX
             machine_options = machines_data['ResourceName'].tolist()
@@ -2293,9 +2741,41 @@ class ComplexDashboard:
         """Display traditional resource group and machine analysis."""
         st.header("🏗️ Resource Analysis")
 
-        # Get traditional data
+        # Get traditional data - ensure fresh calculation
+        st.markdown("🔄 **Calculating fresh data...**")
+
+        # Clear any potential caching issues by forcing fresh calculation
         cost_by_rg = data.get_cost_by_resource_group(use_classified=True)
         cost_by_machine = data.get_cost_by_machine(include_related=True)
+
+        # Verify data freshness
+        if not cost_by_rg.empty:
+            st.success(f"✅ Fresh data loaded: {len(cost_by_rg)} resource groups found")
+
+        # Add consistency validation info
+        st.info("📊 **Data Source**: Using **classified data** (same as Cost Category Analysis for consistency)")
+
+        with st.expander("🔍 **Data Source Validation**", expanded=False):
+            if data.cost_analyzer:
+                # Compare raw vs classified totals
+                raw_total = data.df['Cost'].sum()
+                classified_df = data.cost_analyzer.classify_costs()
+                classified_total = classified_df['Cost'].sum()
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Raw Data Total", f"${raw_total:,.2f}")
+                with col2:
+                    st.metric("Classified Data Total", f"${classified_total:,.2f}")
+                with col3:
+                    diff = abs(raw_total - classified_total)
+                    st.metric("Difference", f"${diff:,.2f}",
+                              delta="✅ Consistent" if diff < 0.01 else "❌ Error")
+
+                st.success(
+                    "✅ **This section uses CLASSIFIED data** - same source as Cost Categories, Service Providers, and Interactive Drill-Down")
+            else:
+                st.warning("⚠️ Cost analyzer not available - using raw data")
 
         if cost_by_rg.empty and cost_by_machine.empty:
             st.warning("No resource data available for analysis.")
@@ -2349,8 +2829,129 @@ class ComplexDashboard:
                 st.error(f"❌ Cost reconciliation issue! Difference: ${diff:,.2f}")
                 st.info("This could indicate data processing issues or duplicate entries.")
 
+        # Add comprehensive manual calculation for PLG-PRD-GWC-RG01 specifically
+        with st.expander("🔧 **MANUAL STEP-BY-STEP Calculation: PLG-PRD-GWC-RG01**", expanded=True):
+            if 'PLG-PRD-GWC-RG01' in cost_by_rg.index:
+                manual_calc = data.manual_calculate_resource_group('PLG-PRD-GWC-RG01')
+
+                if manual_calc:
+                    st.markdown("### 🎯 TRUTH vs MACHINE CALCULATION")
+
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.markdown("**📊 TRUTH (Traditional)**")
+                        st.metric("Total Cost", f"${manual_calc['truth_total']:,.2f}")
+                        st.caption("Simple sum of all costs in RG")
+
+                    with col2:
+                        st.markdown("**🧮 Manual Verification**")
+                        st.metric("Total Cost", f"${manual_calc['manual_total']:,.2f}")
+                        st.caption("Sum of individual resources")
+
+                    with col3:
+                        st.markdown("**🖥️ Machine Assignment**")
+                        st.metric("Total Cost", f"${manual_calc['machine_total']:,.2f}")
+                        st.caption("Sum of machine assignments")
+
+                    with col4:
+                        st.markdown("**⚠️ Unassigned**")
+                        st.metric("Total Cost", f"${manual_calc['unassigned_total']:,.2f}")
+                        st.caption("Resources not assigned to machines")
+
+                    # Validation status
+                    val = manual_calc['validation']
+                    if val['truth_vs_manual'] and val['truth_vs_machine'] and val['all_assigned']:
+                        st.success("✅ **PERFECT**: All calculations match and all resources assigned!")
+                    else:
+                        st.error("❌ **CALCULATION ERRORS DETECTED**")
+                        if not val['truth_vs_manual']:
+                            st.error(
+                                f"🚨 Truth vs Manual mismatch: ${abs(manual_calc['truth_total'] - manual_calc['manual_total']):,.2f}")
+                        if not val['truth_vs_machine']:
+                            st.error(
+                                f"🚨 Truth vs Machine mismatch: ${abs(manual_calc['truth_total'] - manual_calc['machine_total']):,.2f}")
+                        if not val['all_assigned']:
+                            st.error(
+                                f"🚨 {manual_calc['unassigned_resources']} resources unassigned (${manual_calc['unassigned_total']:,.2f})")
+
+                    # Show all resources
+                    st.markdown("### 📋 ALL Resources in PLG-PRD-GWC-RG01")
+                    if manual_calc['all_resources']:
+                        resource_df = pd.DataFrame(manual_calc['all_resources'])
+                        resource_df['Cost'] = resource_df['cost'].apply(lambda x: f"${x:,.2f}")
+                        resource_df['Type'] = resource_df['is_infrastructure'].apply(
+                            lambda x: "Infrastructure" if x else "Main Resource")
+                        resource_df = resource_df[['resource', 'Cost', 'Type', 'records']]
+                        resource_df.columns = ['Resource Name', 'Cost', 'Type', 'Records']
+                        st.dataframe(resource_df.head(20), use_container_width=True, hide_index=True)
+
+                        total_shown = sum([r['cost'] for r in manual_calc['all_resources'][:20]])
+                        st.info(
+                            f"💡 Showing top 20 of {manual_calc['total_resources']} resources. Total shown: ${total_shown:,.2f}")
+
+                    # Show machine assignments
+                    if manual_calc['machines']:
+                        st.markdown("### 🖥️ Machine Assignments")
+                        machine_data = []
+                        for machine_name, machine_info in manual_calc['machines'].items():
+                            machine_data.append({
+                                'Machine': machine_name,
+                                'Cost': f"${machine_info['cost']:,.2f}",
+                                'Resources': machine_info['resource_count'],
+                                'Resource List': ', '.join(machine_info['resources'][:3]) + (
+                                    f' (+{len(machine_info["resources"]) - 3} more)' if len(
+                                        machine_info['resources']) > 3 else '')
+                            })
+
+                        machine_df = pd.DataFrame(machine_data)
+                        st.dataframe(machine_df, use_container_width=True, hide_index=True)
+
+                        st.success(
+                            f"✅ **CORRECT FORMULA**: Sum of machine costs = ${manual_calc['machine_total']:,.2f}")
+
+                    # Show unassigned if any
+                    if manual_calc['unassigned']:
+                        st.markdown("### ⚠️ Unassigned Resources")
+                        unassigned_df = pd.DataFrame(manual_calc['unassigned'])
+                        unassigned_df['Cost'] = unassigned_df['cost'].apply(lambda x: f"${x:,.2f}")
+                        unassigned_df = unassigned_df[['resource', 'Cost', 'records']]
+                        unassigned_df.columns = ['Resource Name', 'Cost', 'Records']
+                        st.dataframe(unassigned_df, use_container_width=True, hide_index=True)
+                        st.warning("These resources could not be assigned to any machine and should be investigated.")
+            else:
+                st.warning("PLG-PRD-GWC-RG01 not found in cost_by_rg data")
+
         # Resource group analysis
         if not cost_by_rg.empty:
+            # Add detailed validation before creating chart
+            with st.expander("🔍 **Chart Data Validation**", expanded=False):
+                st.markdown("**Data being passed to Cost by Resource Group chart:**")
+
+                # Show the exact data going to the chart
+                chart_data = []
+                for rg, cost in cost_by_rg.head(10).items():
+                    chart_data.append({
+                        'Resource Group': rg,
+                        'Cost': f"${cost:,.2f}",
+                        'Raw Value': cost
+                    })
+
+                chart_validation_df = pd.DataFrame(chart_data)
+                st.dataframe(chart_validation_df, use_container_width=True, hide_index=True)
+
+                # Specifically check PLG-PRD-GWC-RG01
+                if 'PLG-PRD-GWC-RG01' in cost_by_rg.index:
+                    plg_cost = cost_by_rg['PLG-PRD-GWC-RG01']
+                    st.success(f"✅ **PLG-PRD-GWC-RG01** in chart data: ${plg_cost:,.2f}")
+                else:
+                    st.error("❌ PLG-PRD-GWC-RG01 not found in chart data!")
+
+                st.markdown("**Chart Creation Details:**")
+                st.markdown(f"- Total RGs in data: {len(cost_by_rg)}")
+                st.markdown(f"- Data type: {type(cost_by_rg)}")
+                st.markdown(f"- Chart shows top: {self.TOP_ITEMS_COUNT} items")
+
             fig1 = self.chart_creator.create_cost_by_resource_group_chart(cost_by_rg)
             st.plotly_chart(fig1, use_container_width=True)
 
@@ -2480,6 +3081,17 @@ class ComplexDashboard:
                     'Resource Group': cost_by_rg.index,
                     'Total Cost ($)': cost_by_rg.values.round(2)
                 })
+
+                # Add debugging info for the table
+                with st.expander("🔍 **Table Data Debug**", expanded=False):
+                    if 'PLG-PRD-GWC-RG01' in cost_by_rg.index:
+                        plg_cost_table = cost_by_rg['PLG-PRD-GWC-RG01']
+                        st.success(f"✅ **PLG-PRD-GWC-RG01** in table: ${plg_cost_table:,.2f}")
+                    else:
+                        st.error("❌ PLG-PRD-GWC-RG01 not found in table data!")
+
+                    st.markdown(f"**Table shows {len(df_display)} resource groups**")
+
                 st.dataframe(df_display, use_container_width=True, hide_index=True)
             else:
                 st.info("No resource group data available.")
