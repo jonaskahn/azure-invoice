@@ -395,10 +395,10 @@ class AzureInvoiceData:
                 machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
                 if not machine_data.empty:
                     machine_costs[machine_name] = machine_data['Cost'].sum()
-                    
-                # Mark these resources as processed
-                for resource in machine_resources:
-                    processed_resources.add(resource)
+                        
+                    # Mark these resources as processed
+                    for resource in machine_resources:
+                        processed_resources.add(resource)
 
         # Handle any remaining unprocessed resources as standalone machines
         for resource in all_resources:
@@ -470,10 +470,10 @@ class AzureInvoiceData:
                     machine_data = clean_df[clean_df['ResourceName'].isin(machine_resources)]
                     if not machine_data.empty:
                         machine_quantities[machine_name] = machine_data['Quantity'].sum()
-                        
-                    # Mark these resources as processed
-                    for resource in machine_resources:
-                        processed_resources.add(resource)
+                            
+                        # Mark these resources as processed
+                        for resource in machine_resources:
+                            processed_resources.add(resource)
 
             # Handle any remaining unprocessed resources as standalone machines
             for resource in all_resources:
@@ -572,7 +572,7 @@ class AzureInvoiceData:
         # STEP 1: Get ALL machines that have resources in this resource group using STANDARDIZED logic
         # Get all machines from the unified calculation
         all_machine_costs = self._get_unified_machine_costs(include_related=True)
-        
+
         # Filter to only machines that have resources in this resource group
         # BUT show the FULL machine cost (like detailed analysis), not just the portion in this RG
         machines_in_rg = {}
@@ -2123,7 +2123,7 @@ class ComplexDashboard:
         # Detailed insights and recommendations
         st.markdown("### 📊 Efficiency Insights & Recommendations")
 
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([6,4])
 
         with col1:
             st.markdown("#### 🎯 Cost Optimization Targets")
@@ -2223,26 +2223,24 @@ class ComplexDashboard:
             rg_display['AvgEfficiency'] = rg_display['AvgEfficiency'].apply(lambda x: f"${x:.4f}")
             rg_display.columns = ['Total Cost', 'Total Hours', 'Resources', 'Avg Cost/Hour']
 
-            st.dataframe(rg_display, use_container_width=True)
+            # Create two columns with 6:4 ratio for Resource Group table and Top Cost Resources
+            col1, col2 = st.columns([6, 4])
+            
+            with col1:
+                st.dataframe(rg_display, use_container_width=True)
+            
+            with col2:
+                top_rgs = rg_summary.head(3).index.tolist()
 
-            # Add space between rows
-            st.markdown("")
+                for rg in top_rgs:
+                    rg_resources = resource_breakdown[resource_breakdown['ResourceGroup'] == rg].head(2)
 
-            # Top Cost Resources by Group - Second Row
-            st.markdown("#### 🎯 Top Cost Resources by Group")
-
-            # Show top 2 most expensive resources per top 3 resource groups
-            top_rgs = rg_summary.head(3).index.tolist()
-
-            for rg in top_rgs:
-                rg_resources = resource_breakdown[resource_breakdown['ResourceGroup'] == rg].head(2)
-
-                st.markdown(f"**{rg}:**")
-                for _, resource in rg_resources.iterrows():
-                    cost = resource['Cost']
-                    efficiency = resource['EfficiencyScore']
-                    st.write(f"• `{resource['ResourceName']}`: ${cost:,.2f} (${efficiency:.4f}/hr)")
-                st.write("")
+                    st.markdown(f"**{rg}:**")
+                    for _, resource in rg_resources.iterrows():
+                        cost = resource['Cost']
+                        efficiency = resource['EfficiencyScore']
+                        st.write(f"• `{resource['ResourceName']}`: ${cost:,.2f} (${efficiency:.4f}/hr)")
+                    st.write("")
 
         # Detailed efficiency breakdown table
         st.markdown("#### 📋 Complete Resource & Group Breakdown")
@@ -2315,9 +2313,202 @@ class ComplexDashboard:
         else:
             st.warning("Unable to generate resource group breakdown - ResourceGroup data may be missing.")
 
+    def display_data_duplication_analysis(self, data: AzureInvoiceData):
+        """Display comprehensive data duplication analysis."""
+        st.header("🔍 Data Quality & Duplication Analysis")
+        st.markdown("**Analyzing case sensitivity issues and data duplicates that may affect calculations**")
+        
+        # Quick duplication check
+        df = data.df
+        
+        # Resource Group Case Sensitivity Check
+        st.subheader("🏗️ Resource Group Case Sensitivity Analysis")
+        
+        if 'ResourceGroup' in df.columns:
+            # Get unique resource groups
+            rg_original = df['ResourceGroup'].dropna().unique()
+            rg_lower_map = {}
+            case_issues = []
+            
+            for rg in rg_original:
+                rg_lower = str(rg).lower()
+                if rg_lower in rg_lower_map:
+                    existing = rg_lower_map[rg_lower]
+                    case_issues.append({
+                        'normalized': rg_lower,
+                        'variant_1': existing,
+                        'variant_2': rg,
+                        'cost_1': df[df['ResourceGroup'] == existing]['Cost'].sum(),
+                        'cost_2': df[df['ResourceGroup'] == rg]['Cost'].sum(),
+                        'records_1': len(df[df['ResourceGroup'] == existing]),
+                        'records_2': len(df[df['ResourceGroup'] == rg])
+                    })
+                else:
+                    rg_lower_map[rg_lower] = rg
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Original RG Count", len(rg_original))
+            with col2:
+                st.metric("Unique (case-insensitive)", len(rg_lower_map))
+            with col3:
+                st.metric("Case Issues Found", len(case_issues))
+            
+            if case_issues:
+                st.error(f"🚨 **CRITICAL: Found {len(case_issues)} resource group case sensitivity issues!**")
+                
+                # Check specifically for PLG-PRD-GWC-RG01
+                plg_issue = None
+                for issue in case_issues:
+                    if 'plg-prd-gwc-rg01' in issue['normalized']:
+                        plg_issue = issue
+                        break
+                
+                if plg_issue:
+                    st.error("🎯 **PLG-PRD-GWC-RG01 Case Issue Confirmed!**")
+                    st.markdown(f"""
+                    **The issue you identified is confirmed:**
+                    - **Variant 1**: `{plg_issue['variant_1']}` - {plg_issue['records_1']} records, ${plg_issue['cost_1']:,.2f}
+                    - **Variant 2**: `{plg_issue['variant_2']}` - {plg_issue['records_2']} records, ${plg_issue['cost_2']:,.2f}
+                    - **Combined Cost**: ${plg_issue['cost_1'] + plg_issue['cost_2']:,.2f}
+                    - **This explains why you see two different groups!**
+                    """)
+                
+                # Show all case issues
+                with st.expander("🔍 **View All Case Sensitivity Issues**", expanded=False):
+                    case_df_data = []
+                    for issue in case_issues:
+                        case_df_data.append({
+                            'Normalized Name': issue['normalized'],
+                            'Variant 1': issue['variant_1'],
+                            'Variant 2': issue['variant_2'],
+                            'V1 Records': issue['records_1'],
+                            'V2 Records': issue['records_2'],
+                            'V1 Cost': f"${issue['cost_1']:,.2f}",
+                            'V2 Cost': f"${issue['cost_2']:,.2f}",
+                            'Combined Cost': f"${issue['cost_1'] + issue['cost_2']:,.2f}"
+                        })
+                    
+                    case_df = pd.DataFrame(case_df_data)
+                    st.dataframe(case_df, use_container_width=True, hide_index=True)
+                    
+                    total_affected_cost = sum(issue['cost_1'] + issue['cost_2'] for issue in case_issues)
+                    st.warning(f"💰 **Total affected cost**: ${total_affected_cost:,.2f}")
+            else:
+                st.success("✅ No resource group case sensitivity issues found!")
+        
+        # Exact Duplicate Analysis
+        st.subheader("🔄 Exact Duplicate Records Analysis")
+        
+        # Check for exact duplicates
+        duplicate_mask = df.duplicated(keep=False)
+        exact_duplicates = df[duplicate_mask]
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Records", len(df))
+        with col2:
+            st.metric("Exact Duplicates", len(exact_duplicates))
+        with col3:
+            if len(exact_duplicates) > 0:
+                excess_cost = exact_duplicates['Cost'].sum() - exact_duplicates.drop_duplicates()['Cost'].sum()
+                st.metric("Excess Cost", f"${excess_cost:,.2f}")
+            else:
+                st.metric("Excess Cost", "$0.00")
+        
+        if len(exact_duplicates) > 0:
+            st.error(f"❌ **Found {len(exact_duplicates)} exact duplicate records!**")
+            
+            with st.expander("🔍 **View Sample Duplicates**", expanded=False):
+                # Show sample duplicates grouped
+                duplicate_groups = exact_duplicates.groupby(list(exact_duplicates.columns)).size().reset_index(name='count')
+                duplicate_groups = duplicate_groups[duplicate_groups['count'] > 1].sort_values('count', ascending=False)
+                
+                if not duplicate_groups.empty:
+                    st.dataframe(duplicate_groups.head(10), use_container_width=True, hide_index=True)
+                    st.info(f"Showing top 10 of {len(duplicate_groups)} duplicate patterns")
+        else:
+            st.success("✅ No exact duplicate records found!")
+        
+        # Key Field Duplicates (same resource, date, service but different cost)
+        st.subheader("🔑 Business Logic Duplicates")
+        
+        key_fields = ['ResourceGroup', 'ResourceName', 'Date', 'ConsumedService']
+        available_keys = [field for field in key_fields if field in df.columns]
+        
+        if len(available_keys) >= 3:
+            business_dupes = df[df.duplicated(subset=available_keys, keep=False)]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Business Duplicates", len(business_dupes))
+            with col2:
+                st.info(f"Key fields: {', '.join(available_keys)}")
+            
+            if len(business_dupes) > 0:
+                # Check for cost variance in business duplicates
+                variance_issues = []
+                for keys, group in business_dupes.groupby(available_keys):
+                    if len(group) > 1 and group['Cost'].std() > 0.01:  # Different costs for same business key
+                        variance_issues.append({
+                            'keys': dict(zip(available_keys, keys)),
+                            'record_count': len(group),
+                            'cost_variance': group['Cost'].std(),
+                            'cost_values': group['Cost'].tolist()
+                        })
+                
+                if variance_issues:
+                    st.warning(f"⚠️ **Found {len(variance_issues)} patterns with cost variance!**")
+                    
+                    with st.expander("🔍 **View Cost Variance Issues**", expanded=False):
+                        for i, issue in enumerate(variance_issues[:5]):
+                            st.markdown(f"**Issue {i+1}:**")
+                            for key, value in issue['keys'].items():
+                                st.write(f"- {key}: {value}")
+                            st.write(f"- Record Count: {issue['record_count']}")
+                            st.write(f"- Cost Variance: ${issue['cost_variance']:.2f}")
+                            st.write(f"- Cost Values: {issue['cost_values']}")
+                            st.markdown("---")
+                else:
+                    st.success("✅ No cost variance issues in business duplicates!")
+            else:
+                st.success("✅ No business duplicate records found!")
+        
+        # Summary and Recommendations
+        st.subheader("💡 Data Quality Recommendations")
+        
+        recommendations = []
+        
+        if case_issues:
+            recommendations.append(f"🏗️ **Fix Case Sensitivity**: Standardize resource group names (affects ${sum(issue['cost_1'] + issue['cost_2'] for issue in case_issues):,.2f})")
+        
+        if len(exact_duplicates) > 0:
+            recommendations.append(f"🔄 **Remove Duplicates**: Delete {len(exact_duplicates)} exact duplicate records")
+        
+        if 'variance_issues' in locals() and variance_issues:
+            recommendations.append(f"🔑 **Investigate Cost Variance**: Review {len(variance_issues)} patterns with same business keys but different costs")
+        
+        if recommendations:
+            for rec in recommendations:
+                st.warning(rec)
+            
+            st.error("**⚠️ Data quality issues found! These issues may cause:**")
+            st.markdown("""
+            - Double-counting of costs in resource group analysis
+            - Incorrect machine groupings and related resource detection
+            - Inflated totals in dashboards
+            - Inconsistent calculations between sections
+            """)
+        else:
+            st.success("✅ **Data quality looks good!** No major duplication issues detected.")
+
     def run_complex_analysis(self, data: AzureInvoiceData):
         """Run the complete complex analysis dashboard."""
         st.info("🔧 **Complex Template Active** - Advanced Azure invoice analysis with cost categorization")
+
+        # Add data duplication analysis at the top
+        self.display_data_duplication_analysis(data)
+        st.divider()
 
         # Add overall consistency validation at the top
         if data.cost_analyzer:
@@ -2617,7 +2808,7 @@ class ComplexDashboard:
                 traditional_cost = traditional_rg_costs.get(selected_rg, 0) if selected_rg in traditional_rg_costs else 0
 
                 st.markdown("#### 🔍 **Cost Calculation Validation**")
-                
+
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.metric("Sum of Machines", f"${machine_total:,.2f}")
@@ -3114,11 +3305,11 @@ class ComplexDashboard:
                             
                             # Fallback to old method display
                             st.markdown("**⬇️ Fallback: Old Method Results**")
-                            if debug_info.get('related_resources'):
-                                related_df = pd.DataFrame(debug_info['related_resources'])
-                                related_df['Cost'] = related_df['Cost'].apply(lambda x: f"${x:,.2f}")
-                                st.dataframe(related_df, use_container_width=True, hide_index=True)
-                                st.write(f"**Total from related resources:** ${debug_info.get('related_resources_total', 0):,.2f}")
+                        if debug_info.get('related_resources'):
+                            related_df = pd.DataFrame(debug_info['related_resources'])
+                            related_df['Cost'] = related_df['Cost'].apply(lambda x: f"${x:,.2f}")
+                            st.dataframe(related_df, use_container_width=True, hide_index=True)
+                            st.write(f"**Total from related resources:** ${debug_info.get('related_resources_total', 0):,.2f}")
 
                         st.markdown("**📊 Breakdown by Category (Old Method for Comparison):**")
                         if debug_info.get('breakdown_by_category'):
@@ -3355,7 +3546,7 @@ class ComplexDashboard:
             fig1 = self.chart_creator.create_cost_by_resource_group_chart(cost_by_rg)
             st.plotly_chart(fig1, use_container_width=True)
 
-                # Top machines analysis
+        # Top machines analysis
         if not cost_by_machine.empty:
             # Add slider to control number of machines displayed
             num_machines = st.slider(
