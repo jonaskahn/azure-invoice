@@ -2108,9 +2108,47 @@ class ComplexDashboard:
         with col4:
             st.metric("Median Cost/Hour", f"${efficiency_median:.4f}")
 
-        # Enhanced efficiency chart
-        fig = self.chart_creator.create_efficiency_metrics_chart(efficiency_data)
-        st.plotly_chart(fig, use_container_width=True)
+        # Enhanced efficiency chart (custom layout)
+        # Get the four traces from the chart creator
+        fig_full = self.chart_creator.create_efficiency_metrics_chart(efficiency_data)
+        traces = fig_full.data
+        # traces: [0]=cost bar, [1]=usage bar, [2]=cost/unit line, [3]=pie
+        # Layout: top row 50:50, bottom row 60:40
+        col_top1, col_top2 = st.columns(2)
+        col_bot1, col_bot2 = st.columns([3, 2])
+        # Top row
+        with col_top1:
+            fig_cost = go.Figure(traces[0])
+            fig_cost.update_layout(title='Total Cost by Resource', height=350, margin=dict(t=40, b=20))
+            st.plotly_chart(fig_cost, use_container_width=True)
+        with col_top2:
+            fig_usage = go.Figure(traces[1])
+            fig_usage.update_layout(title='Usage Hours by Resource', height=350, margin=dict(t=40, b=20))
+            st.plotly_chart(fig_usage, use_container_width=True)
+        # Bottom row (now 50:50)
+        col_bot1, col_bot2 = st.columns(2)
+        with col_bot1:
+            fig_cpu = go.Figure(traces[2])
+            fig_cpu.update_layout(
+                title='Cost per Unit',
+                height=400,
+                margin=dict(t=50, b=40),
+                font=dict(size=16),
+                xaxis_title='Resource',
+                yaxis_title='Cost per Unit ($/hr)'
+            )
+            st.plotly_chart(fig_cpu, use_container_width=True)
+        with col_bot2:
+            fig_pie = go.Figure(traces[3])
+            fig_pie.update_layout(
+                title='Efficiency Distribution',
+                height=400,
+                margin=dict(t=50, b=40),
+                font=dict(size=16),
+                legend=dict(orientation='h', y=-0.2, x=0.5, xanchor='center'),
+            )
+            fig_pie.update_traces(textfont_size=16, pull=[0.05, 0, 0], textinfo='label+percent+value', showlegend=True)
+            st.plotly_chart(fig_pie, use_container_width=True)
 
         # Detailed insights and recommendations
         st.markdown("### 📊 Efficiency Insights & Recommendations")
@@ -2128,12 +2166,18 @@ class ComplexDashboard:
                 st.warning(
                     f"⚠️ **{len(high_cost_resources)} resources** have high cost per hour (>${high_cost_threshold:.4f}+)")
 
-                display_high_cost = high_cost_resources.head(5)[['Cost', 'Quantity', 'EfficiencyScore']].copy()
+                # Include Resource Name and Resource Group for better clarity
+                # Map each resource to its primary resource group
+                resource_group_map = data.df.groupby('ResourceName')['ResourceGroup'].agg(lambda x: x.mode()[0] if not x.mode().empty else 'Unknown')
+                # Prepare display with ResourceName, ResourceGroup, Cost, Quantity, EfficiencyScore
+                display_high_cost = high_cost_resources.head(5)[['ResourceName', 'Cost', 'Quantity', 'EfficiencyScore']].copy()
+                display_high_cost['Resource Group'] = display_high_cost['ResourceName'].map(resource_group_map)
+                display_high_cost = display_high_cost[['ResourceName', 'Resource Group', 'Cost', 'Quantity', 'EfficiencyScore']]
+                # Format values
                 display_high_cost['Cost'] = display_high_cost['Cost'].apply(lambda x: f"${x:,.2f}")
                 display_high_cost['Quantity'] = display_high_cost['Quantity'].apply(lambda x: f"{x:,.0f}")
                 display_high_cost['EfficiencyScore'] = display_high_cost['EfficiencyScore'].apply(lambda x: f"${x:.4f}")
-                display_high_cost.columns = ['Total Cost', 'Hours', 'Cost/Hour']
-
+                display_high_cost.columns = ['Resource Name', 'Resource Group', 'Total Cost', 'Hours', 'Cost/Hour']
                 st.dataframe(display_high_cost, use_container_width=True)
 
                 # Calculate potential savings
